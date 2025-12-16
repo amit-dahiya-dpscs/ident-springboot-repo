@@ -2,43 +2,49 @@ package md.dpscs.cch.iis.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
-import java.io.Serializable;
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
-public class PersonDetailDTO implements Serializable {
-    // Core Person Identifiers (from Person entity)
-    private Long personId;
-    private String stateId;
+public class PersonDetailDTO {
+    // --- Header Info ---
+    private Long systemId;
+    private String sid;
     private String fbiNumber;
-    private String recordType;
-    private String comments;
-    private String mugshotFlag;
-
+    private String recordType; // 'C' = Criminal, 'J' = Juvenile
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "MM/dd/yyyy")
-    private LocalDate primaryDateOfBirth;
+    private LocalDateTime lastUpdated;
+    private String cautionFlag; // "YES" or "NO" based on flags
+    private String comments;
 
-    // Nested DTOs (Representing data aggregated from 12 other tables)
+    // --- Personal Identifiers (Demographics) ---
+    private String race;
+    private String sex;
+    private String height;
+    private String weight;
+    private String eyeColor;
+    private String hairColor;
+    private String skinTone;
+    private String placeOfBirth;
+    private String citizenship;
+    private String patternRight;
+    private String patternLeft;
 
-    // 1. PersonName
+    // --- Sections (Lists) ---
     private List<NameDTO> namesAndAliases;
+    private List<AddressDTO> addressHistory;
+    private List<FingerprintDTO> fingerprints; // Henry & NCIC
 
-    // 2. PersonFlag
-    private List<FlagDTO> flags;
-
-    // 3. PersonAttribute (Cautions/Scars)
-    private List<AttributeDTO> cautionsAndScars;
-
-    // 4. PersonIDSecondary (SSN/DL/Misc)
-    private List<SecondaryIDDTO> secondaryIdentifiers;
-
-    // 5. PersonAltDOB
+    // --- Appended ID Section ---
+    private List<FlagDTO> flags; // Cautions & Status Flags
+    private List<SsnDTO> ssnHistory;
+    private List<DriverLicenseDTO> driverLicenses;
+    private List<AttributeDTO> scarsAndMarks;
     private List<AltDOBDTO> alternateDOBs;
+    private List<SecondaryIDDTO> secondaryIdentifiers; // Misc Numbers
 
-    // 6-8. Documents
+    // --- Reference Section ---
     private List<DocumentDTO> arrestDocuments;
     private List<DocumentDTO> indexDocuments;
     private List<DocumentDTO> generalReferences;
 }
-

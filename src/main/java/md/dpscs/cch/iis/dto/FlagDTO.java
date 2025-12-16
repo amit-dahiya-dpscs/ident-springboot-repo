@@ -1,12 +1,14 @@
 package md.dpscs.cch.iis.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Data;
-import java.io.Serializable;
-import java.time.LocalDate;
+import lombok.NoArgsConstructor;
 
 @Data
-public class FlagDTO implements Serializable {
-    private String flagName;
-    private String flagValue;
-    private LocalDate lastUpdateDate;
+@AllArgsConstructor
+@NoArgsConstructor
+public class FlagDTO {
+    private String code; // e.g., "A", "B"
+    private String type; // "CAUTION" or "STATUS"
+    private String description; // e.g., "Armed"
 }

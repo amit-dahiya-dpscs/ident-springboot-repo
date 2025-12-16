@@ -2,188 +2,213 @@ package md.dpscs.cch.iis.service;
 
 import md.dpscs.cch.iis.dto.SearchCriteriaDTO;
 import md.dpscs.cch.iis.dto.SearchResultDTO;
-import md.dpscs.cch.iis.model.Person;
-import md.dpscs.cch.iis.model.PersonName;
-import md.dpscs.cch.iis.model.PersonHenryFP;
-import md.dpscs.cch.iis.repository.PersonRepository;
-import md.dpscs.cch.iis.repository.PersonNameRepository;
-import md.dpscs.cch.iis.repository.PersonHenryFPRepository;
+import md.dpscs.cch.iis.model.IdentMaster;
+import md.dpscs.cch.iis.model.IdentName;
+import md.dpscs.cch.iis.repository.IdentNameRepository;
 import md.dpscs.cch.iis.util.MainframeDataUtils;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class SearchService {
 
-    // Inject core dependencies (Assumed to be defined in Repository Layer)
-    private final PersonRepository personRepository;
-    private final PersonNameRepository personNameRepository;
-    private final PersonHenryFPRepository personHenryFPRepository;
-    private final MainframeDataUtils mainframeDataUtils;
+    private static final Logger logger = LoggerFactory.getLogger(SearchService.class);
 
-    // Standard format expected from the modern React frontend date input (MM/DD/YYYY)
-    private static final DateTimeFormatter UI_INPUT_DOB_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
+    private final IdentNameRepository nameRepo;
+    private final MainframeDataUtils utils;
 
-    /**
-     * Executes search based on II0200C's priority logic (SID -> FBI -> Name/Soundex) and filters results.
-     * This method fully implements all logic without mocking.
-     * @param criteria The search parameters from the React frontend.
-     * @return A list of filtered, display-ready search results.
-     */
-    public List<SearchResultDTO> executeSearch(SearchCriteriaDTO criteria) {
+    private static final DateTimeFormatter DOB_FMT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
 
-        if (!isValidSearchCriteria(criteria)) {
-            return Collections.emptyList();
+    @Transactional(readOnly = true)
+    public Page<SearchResultDTO> executeSearch(SearchCriteriaDTO criteria, Pageable pageable) {
+
+        // 1. Sanitize Inputs
+        String race = StringUtils.hasText(criteria.getRace()) ? criteria.getRace().toUpperCase() : null;
+        String sex = StringUtils.hasText(criteria.getSex()) ? criteria.getSex().toUpperCase() : null;
+
+        // 2. Parse Date Range (Supports MM/dd/yyyy OR yyyy)
+        DateRange dateRange = parseDobRange(criteria.getDob());
+        LocalDate startDob = dateRange != null ? dateRange.start : null;
+        LocalDate endDob = dateRange != null ? dateRange.end : null;
+
+        // --- PRIORITY 1: SID Search (Exact Unique Record) ---
+        if (StringUtils.hasText(criteria.getSid())) {
+            String rawSid = criteria.getSid();
+            // Filter by NameType='P' to ensure we get 1 row per SID
+            return nameRepo.findBySidPrimary(rawSid, pageable)
+                    .map(this::convertEntityToDTO);
         }
 
-        // 1. Prepare DOB for filtering
-        Optional<LocalDate> inputDob = parseInputDob(criteria.getDob());
-
-        List<Person> rawResults;
-
-        // --- 2. MODERN SEARCH ROUTING (II0200C Priority Logic) ---
-        // Searches are prioritized: SID -> FBI -> Name/Soundex
-        if (criteria.getSid() != null && !criteria.getSid().isEmpty()) {
-            // Priority 1: SID Search
-            rawResults = personRepository.findAllByStateId(criteria.getSid());
-        } else if (criteria.getFbiNumber() != null && !criteria.getFbiNumber().isEmpty()) {
-            // Priority 2: FBI Search
-            rawResults = personRepository.findAllByFbiNumber(criteria.getFbiNumber());
-        } else if (criteria.getFullName() != null && !criteria.getFullName().isEmpty()) {
-            // Priority 3: Name/Soundex Search
-            String soundex = mainframeDataUtils.calculateStandardSoundex(criteria.getFullName());
-            // This requires a complex JPA Query joining Person and PersonName by soundex
-            // We retrieve Person entities based on the Soundex result:
-            rawResults = personRepository.findAllBySoundexCode(soundex);
-        } else {
-            rawResults = Collections.emptyList();
+        // --- PRIORITY 2: FBI Search (Exact Unique Record) ---
+        if (StringUtils.hasText(criteria.getFbiNumber())) {
+            return nameRepo.findByFbiPrimary(
+                            criteria.getFbiNumber().toUpperCase().trim(), pageable)
+                    .map(this::convertEntityToDTO);
         }
 
-        // --- 3. ACCEPTANCE TESTS (Filtering raw results based on II0200C rules) ---
-        return rawResults.stream()
-                .filter(p -> p != null)
-                .filter(p -> passesAcceptanceTests(p, criteria, inputDob.orElse(null)))
-                .map(this::convertToDTO)
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Replicates II0200C's "Acceptance Tests" (Sex match, Race match, DOB range).
-     */
-    private boolean passesAcceptanceTests(Person person, SearchCriteriaDTO criteria, LocalDate inputDob) {
-
-        // Race Match Logic
-        if (criteria.getRaceCode() != null && !criteria.getRaceCode().isEmpty() &&
-                !person.getRaceCode().equalsIgnoreCase(criteria.getRaceCode())) {
-            return false;
+        // --- PRIORITY 3: SSN Search (Exact Unique Record) ---
+        if (StringUtils.hasText(criteria.getSsn())) {
+            return nameRepo.findBySsnPrimary(
+                            criteria.getSsn().trim(), pageable)
+                    .map(this::convertEntityToDTO);
         }
 
-        // Sex Match Logic
-        if (criteria.getSexCode() != null && !criteria.getSexCode().isEmpty() &&
-                !person.getSexCode().equalsIgnoreCase(criteria.getSexCode())) {
-            return false;
+        // --- PRIORITY 4: Driver's License Search ---
+        if (StringUtils.hasText(criteria.getDlNumber())) {
+            // Data is already pre-processed by Frontend (e.g. Num="620...", State="MDM")
+            // Just ensure it's trimmed/uppercase for safety
+            String dlNum = criteria.getDlNumber().trim().toUpperCase();
+            String dlState = StringUtils.hasText(criteria.getDlState())
+                    ? criteria.getDlState().trim().toUpperCase()
+                    : null;
+
+            return nameRepo.findByDlPrimary(dlNum, dlState, pageable)
+                    .map(this::convertEntityToDTO);
         }
 
-        // DOB Match/Range Logic (Modernized approach to handle date comparison)
-        if (inputDob != null) {
-            // If the person has no DOB on record, it fails the filter if DOB was supplied in criteria
-            if (person.getDateOfBirth() == null) return false;
+        // --- PRIORITY 5: Name / Soundex Search ---
+        if (StringUtils.hasText(criteria.getFullName())) {
 
-            // Enforce exact matching for modernization; ranges would require complex implementation
-            if (!person.getDateOfBirth().isEqual(inputDob)) {
-                return false;
+            // Parse Name (Last, First)
+            NameParts parts = parseFullName(criteria.getFullName());
+
+            // Prepare Partial First Name Pattern (e.g. "KEN%")
+            // Mainframe Logic: Always filters by First Name prefix if provided
+            String firstNamePattern = StringUtils.hasText(parts.first) ? parts.first + "%" : "";
+
+            // Path A: SDX (Soundex)
+            if ("SDX".equalsIgnoreCase(criteria.getTypeOfRequest())) {
+                // Validation: SID/FBI/SSN must be empty for SDX
+                if (StringUtils.hasText(criteria.getSid()) || StringUtils.hasText(criteria.getFbiNumber()) || StringUtils.hasText(criteria.getSsn())) {
+                    throw new IllegalArgumentException("SID, FBI, and SSN must be empty for SDX Search.");
+                }
+
+                String soundex = utils.calculateStandardSoundex(parts.last);
+
+                // Query: Soundex(Last) + Like(First) + Date Range
+                return nameRepo.findBySoundex(
+                                soundex, firstNamePattern, startDob, endDob, race, sex, pageable)
+                        .map(this::convertEntityToDTO);
+            }
+
+            // Path B: Space (Standard)
+            else {
+                // Query: Exact(Last) + Like(First) + Date Range
+                return nameRepo.findExactMatch(
+                                parts.last, firstNamePattern, startDob, endDob, race, sex, pageable)
+                        .map(this::convertEntityToDTO);
             }
         }
 
-        return true;
+        return new PageImpl<>(Collections.emptyList(), pageable, 0);
     }
 
-    /**
-     * Safely converts the UI's date string (MM/dd/yyyy) to a LocalDate object.
-     */
-    private Optional<LocalDate> parseInputDob(String dobString) {
-        if (dobString == null || dobString.length() < 10) return Optional.empty();
-        try {
-            return Optional.of(LocalDate.parse(dobString, UI_INPUT_DOB_FORMAT));
-        } catch (DateTimeParseException e) {
-            // Log this exception: invalid date format from the UI input
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Enforces the mainframe rule: at least one primary identifier must be supplied.
-     */
-    private boolean isValidSearchCriteria(SearchCriteriaDTO criteria) {
-        return criteria.getSid() != null || criteria.getFbiNumber() != null || criteria.getFullName() != null;
-    }
-
-    /**
-     * Fetches and formats the full display name for the NAME column.
-     * This is the modernized implementation for finding the primary name (InsertSeqNum=1).
-     */
-    private String getFormattedFullName(Long personId) {
-
-        // The repository method finds the primary name using the convention (InsertSeqNum=1)
-        Optional<PersonName> primaryName = personNameRepository.findById_PersonIdAndId_InsertSeqNum(personId, 1);
-
-        if (primaryName.isEmpty()) {
-            return "[NAME NOT FOUND]";
-        }
-
-        PersonName name = primaryName.get();
-        // Format: LAST_NAME, FIRST_NAME MIDDLE_INITIAL MIDDLE_REST
-        return name.getLastName() + ", " +
-                name.getFirstName() +
-                (name.getMiddleInit() != null && !name.getMiddleInit().isEmpty() ? " " + name.getMiddleInit() : "") +
-                (name.getRestMiddleName() != null && !name.getRestMiddleName().isEmpty() ? " " + name.getRestMiddleName() : "");
-    }
-
-    /**
-     * Fetches FP data (Henry/NCIC) and formats it using the utility class for the display columns.
-     * This populates the PRINT TYPE and PRIMARY HENRY columns in the results table.
-     */
-    private String getFormattedPrintType(Long personId) {
-
-        // Find the PersonHenryFP record
-        Optional<PersonHenryFP> henryData = personHenryFPRepository.findByPersonId(personId);
-
-        if (henryData.isEmpty()) {
-            return "";
-        }
-
-        // Use the utility to convert the raw primary Henry string for display
-        return mainframeDataUtils.convertMafisHandToDisplay(henryData.get().getPrimaryHenry());
-    }
-
-    /**
-     * Converts a Person Model to a SearchResult DTO, including auxiliary lookups.
-     */
-    private SearchResultDTO convertToDTO(Person person) {
+    // --- Helper: DTO Conversion ---
+    private SearchResultDTO convertEntityToDTO(IdentName matchedName) {
         SearchResultDTO dto = new SearchResultDTO();
-        dto.setPersonId(person.getPersonId());
-        dto.setSidNumber(person.getStateId());
-        dto.setRace(person.getRaceCode());
-        dto.setSex(person.getSexCode());
+        IdentMaster master = matchedName.getMaster();
 
-        // Auxiliary Lookups for Display Columns
-        dto.setName(this.getFormattedFullName(person.getPersonId()));
-        String convertedFP = this.getFormattedPrintType(person.getPersonId());
-        dto.setPrimaryHenry(convertedFP);
-        dto.setPrintType(convertedFP);
+        dto.setSystemId(master.getSystemId());
+        dto.setSidNumber(master.getSid());
+        dto.setFbiNumber(master.getFbiNumber());
 
-        // Set LocalDate object; @JsonFormat handles the final String conversion.
-        dto.setDateOfBirth(person.getDateOfBirth());
+        String lName = matchedName.getLastName() != null ? matchedName.getLastName().trim() : "";
+        String fName = matchedName.getFirstName() != null ? matchedName.getFirstName().trim() : "";
+        String mName = matchedName.getMiddleName() != null ? matchedName.getMiddleName().trim() : "";
+
+        // Logic: "LAST, FIRST MIDDLE"
+        StringBuilder fullName = new StringBuilder(lName);
+
+        if (!fName.isEmpty()) {
+            fullName.append(", ").append(fName);
+        }
+
+        if (!mName.isEmpty()) {
+            fullName.append(" ").append(mName);
+        }
+
+        dto.setFormattedName(fullName.toString());
+
+        dto.setRace(matchedName.getRaceCode());
+        dto.setSex(matchedName.getSexCode());
+        dto.setDateOfBirth(matchedName.getDateOfBirth());
+
+        // Fingerprint Pattern (Convert Raw -> Display)
+        String rawFp = matchedName.getMafisFingerprint();
+        String convertedFp = utils.convertMafisHandToDisplay(rawFp); // e.g. "AW\W\AW\W\"
+
+        if (convertedFp != null && convertedFp.length() >= 10) {
+            // Split: First 5 (Right) + SPACE + Next 5 (Left)
+            String right = convertedFp.substring(0, 5);
+            String left = convertedFp.substring(5, 10);
+            dto.setPrintType(right + " " + left);
+        } else {
+            // Fallback if data is incomplete
+            dto.setPrintType(convertedFp);
+        }
+
+        // Flag if this is an Alias (NameType != 'P')
+        dto.setAliasMatch(!"P".equals(matchedName.getNameType()));
 
         return dto;
+    }
+
+    // --- Helper: Name Parsing ---
+    private record NameParts(String last, String first) {}
+
+    private NameParts parseFullName(String fullName) {
+        if (!StringUtils.hasText(fullName)) return new NameParts("", "");
+
+        String cleaned = fullName.toUpperCase().trim();
+
+        if (cleaned.contains(",")) {
+            String[] parts = cleaned.split(",");
+            String last = parts[0].trim();
+
+            String firstFull = parts.length > 1 ? parts[1].trim() : "";
+
+            String first = firstFull.split("\\s+")[0];
+
+            return new NameParts(last, first);
+        }
+
+        return new NameParts(cleaned, "");
+    }
+
+    // --- Helper: Date Parsing (Range Support) ---
+    private record DateRange(LocalDate start, LocalDate end) {}
+
+    private DateRange parseDobRange(String dobString) {
+        if (!StringUtils.hasText(dobString)) return null;
+
+        // Try "MM/dd/yyyy" (Exact Date)
+        try {
+            LocalDate date = LocalDate.parse(dobString, DOB_FMT);
+            return new DateRange(date, date); // Start = End
+        } catch (Exception e) {
+            // Continue to Year check
+        }
+
+        // Try "yyyy" (Year Only) - Common for SDX
+        if (dobString.matches("^\\d{4}$")) {
+            int year = Integer.parseInt(dobString);
+            LocalDate start = LocalDate.of(year, 1, 1);
+            LocalDate end = LocalDate.of(year, 12, 31);
+            return new DateRange(start, end);
+        }
+
+        return null;
     }
 }

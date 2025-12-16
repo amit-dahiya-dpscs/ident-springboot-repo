@@ -1,11 +1,9 @@
 package md.dpscs.cch.iis.dto;
 
 import lombok.Data;
-import java.io.Serializable;
 
 @Data
-public class SecondaryIDDTO implements Serializable {
-    private String idType; // SSN, DriverLicense, Misc
-    private String idValue;
-    private String issuingSource;
+public class SecondaryIDDTO {
+    private String idType;  // e.g., "SID", "DOC"
+    private String idValue; // The actual number
 }

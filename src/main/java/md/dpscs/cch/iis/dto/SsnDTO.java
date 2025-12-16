@@ -5,7 +5,8 @@ import lombok.Data;
 import java.time.LocalDate;
 
 @Data
-public class AltDOBDTO {
+public class SsnDTO {
+    private String ssn;
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "MM/dd/yyyy")
-    private LocalDate dob;
+    private LocalDate dateRecorded;
 }
