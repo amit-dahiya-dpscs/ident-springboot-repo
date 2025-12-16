@@ -25,36 +25,37 @@ public class AuthService {
         this.auditService = auditService;
     }
 
-    public AuthResponse loginUser(LoginRequest loginRequest) {
+    /**
+     * Updated to accept clientIpAddress for auditing.
+     */
+    public AuthResponse loginUser(LoginRequest loginRequest, String clientIpAddress) {
         try {
             logger.info("Authentication attempt for user: {}", loginRequest.getUsername());
 
-            // This is the core authentication step.
-            // For LDAP, this will perform the bind and group membership checks.
+            // Core authentication
             Authentication authentication = authenticationManager.authenticate(
                     new UsernamePasswordAuthenticationToken(loginRequest.getUsername(), loginRequest.getPassword()));
 
-            // If successful, set the full authentication object (including roles) in the SecurityContext.
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            // Generate the JWT token.
+            // Generate JWT
             String jwt = jwtUtil.generateToken(authentication);
-
-            // Extract the user details from the completed authentication object.
-            // This UserDetails object now contains the authorities (roles) populated by our LdapAuthoritiesPopulator.
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
 
-            logger.info("User '{}' authenticated successfully with roles: {}", userDetails.getUsername(), userDetails.getAuthorities());
+            logger.info("User '{}' authenticated successfully", userDetails.getUsername());
 
-            auditService.logLoginAttempt(loginRequest.getUsername(), true); // Log success
+            // CHANGED: Pass IP to audit service
+            auditService.logLoginAttempt(loginRequest.getUsername(), clientIpAddress, true);
 
-            // Create the response DTO, passing the token, username, and the collection of authorities.
             return new AuthResponse(jwt, userDetails.getUsername(), userDetails.getAuthorities());
 
         } catch (Exception e) {
-            logger.error("Authentication failed for user: {}", loginRequest.getUsername(), e);
-            auditService.logLoginAttempt(loginRequest.getUsername(), false); // Log failure
-            throw e; // Re-throw the exception so the GlobalExceptionHandler can handle it
+            logger.error("Authentication failed for user: {}", loginRequest.getUsername());
+
+            // CHANGED: Pass IP to audit service
+            auditService.logLoginAttempt(loginRequest.getUsername(), clientIpAddress, false);
+
+            throw e;
         }
     }
 }

@@ -18,6 +18,9 @@ public class AuditLog {
     @Column(nullable = false)
     private String action;
 
+    @Column
+    private String ipAddress;
+
     @Lob
     @Column(columnDefinition = "NVARCHAR(MAX)")
     private String details;
@@ -29,10 +32,11 @@ public class AuditLog {
         this.timestamp = LocalDateTime.now();
     }
 
-    public AuditLog(String username, String action, String details) {
+    public AuditLog(String username, String action, String details, String ipAddress) {
         this.username = username;
         this.action = action;
         this.details = details;
+        this.ipAddress = ipAddress;
         this.timestamp = LocalDateTime.now();
     }
 }

@@ -5,6 +5,7 @@ import md.dpscs.cch.iis.model.CountryCode;
 import md.dpscs.cch.iis.repository.CautionCodeRepository;
 import md.dpscs.cch.iis.repository.CountryCodeRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,11 +21,13 @@ public class ReferenceDataService {
     private final CautionCodeRepository cautionRepo;
 
     @Transactional(readOnly = true)
+    @Cacheable("countries")
     public List<CountryCode> getAllCountryCodes() {
         return countryRepo.findAllByOrderByDescriptionAsc();
     }
 
     @Transactional(readOnly = true)
+    @Cacheable("cautions")
     public Map<String, String> getAllCautionCodes() {
         // Convert List<Entity> to Map<Code, Description> for the Frontend
         return cautionRepo.findAllByOrderByCodeAsc().stream()
