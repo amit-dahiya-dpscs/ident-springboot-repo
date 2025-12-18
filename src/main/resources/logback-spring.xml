@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <springProfile name="local">
+        <property name="LOGS_PATH" value="C:/Apps/IdentIndex/Logs"/>
+
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight([%thread]) %highlight(%-5level) %cyan(%logger{36}) - %msg%n</Pattern>
+            </encoder>
+        </appender>
+
+        <appender name="ROLLING_FILE_LOCAL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOGS_PATH}/ident-index-local.log</file>
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+            </encoder>
+
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOGS_PATH}/archived/ident-index-local-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>7</maxHistory>
+                <totalSizeCap>100MB</totalSizeCap>
+                <cleanHistoryOnStart>true</cleanHistoryOnStart>
+            </rollingPolicy>
+        </appender>
+
+        <logger name="org.hibernate.SQL" level="DEBUG"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ROLLING_FILE_LOCAL"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="dev">
+        <property name="LOGS_PATH" value="C:/Apps/IdentIndex/Logs"/>
+
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight([%thread]) %highlight(%-5level) %cyan(%logger{36}) - %msg%n</Pattern>
+            </encoder>
+        </appender>
+
+        <appender name="ROLLING_FILE_DEV" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOGS_PATH}/ident-index-app.log</file>
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+            </encoder>
+
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOGS_PATH}/archive/ident-index-app-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>10MB</maxFileSize>
+                <maxHistory>30</maxHistory>
+                <totalSizeCap>1GB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <logger name="org.hibernate.SQL" level="DEBUG"/>
+        <logger name="org.hibernate.type.descriptor.sql.BasicBinder" level="TRACE"/>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ROLLING_FILE_DEV"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <property name="LOGS_PATH" value="C:/Apps/IdentIndex/Logs"/>
+
+        <appender name="ROLLING_FILE_PROD" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOGS_PATH}/ident-index-prod.log</file>
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <Pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</Pattern>
+            </encoder>
+
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOGS_PATH}/archive/ident-index-prod-%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+                <maxFileSize>50MB</maxFileSize>
+                <maxHistory>60</maxHistory>
+                <totalSizeCap>5GB</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <logger name="org.hibernate.SQL" level="OFF"/>
+
+        <root level="INFO">
+            <appender-ref ref="ROLLING_FILE_PROD"/>
+        </root>
+    </springProfile>
+
+</configuration>
