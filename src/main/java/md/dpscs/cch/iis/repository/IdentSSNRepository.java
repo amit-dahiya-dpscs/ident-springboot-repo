@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentSSNRepository extends JpaRepository<IdentSSN, Long> {
     List<IdentSSN> findByMaster_SystemId(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }

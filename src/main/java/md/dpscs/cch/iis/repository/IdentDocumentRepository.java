@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentDocumentRepository extends JpaRepository<IdentDocument, Long> {
     List<IdentDocument> findByMaster_SystemIdOrderByDocumentDateDesc(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }

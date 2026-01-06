@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentScarsMarksRepository extends JpaRepository<IdentScarsMarks, Long> {
     List<IdentScarsMarks> findByMaster_SystemId(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }

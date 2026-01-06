@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentMiscNumRepository extends JpaRepository<IdentMiscNum, Long> {
     List<IdentMiscNum> findByMaster_SystemId(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }

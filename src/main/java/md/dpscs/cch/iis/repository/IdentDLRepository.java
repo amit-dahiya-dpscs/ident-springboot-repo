@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentDLRepository extends JpaRepository<IdentDL, Long> {
     List<IdentDL> findByMaster_SystemId(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }

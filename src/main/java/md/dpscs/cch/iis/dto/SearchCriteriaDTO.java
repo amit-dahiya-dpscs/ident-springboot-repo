@@ -25,15 +25,15 @@ public class SearchCriteriaDTO implements Serializable {
     @Pattern(regexp = "^$|^(SID-)?\\d+$", message = "Invalid SID format")
     private String sid;
 
-    // Allow empty string OR Alphanumeric (Max 10 chars)
-    @Pattern(regexp = "^$|^[A-Za-z0-9]{1,10}$", message = "Invalid FBI Number format")
+    // Allow empty string OR Alphanumeric
+    @Pattern(regexp = "^$|^[A-Za-z0-9]+$", message = "Invalid FBI Number format")
     private String fbiNumber;
 
     // Allow empty string OR exactly 9 digits
     @Pattern(regexp = "^$|^\\d{9}$", message = "SSN must be 9 digits")
     private String ssn;
 
-    @Size(max = 22, message = "DL Number too long")
+    @Size(max = 30, message = "DL Number too long")
     private String dlNumber;
 
     // Legacy Spec 3001: State is 3 chars (e.g., "MD ")

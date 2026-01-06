@@ -33,9 +33,20 @@ public class AuditService {
     public void logAction(String username, String ipAddress, String action, String details) {
         if (username == null) username = "UNKNOWN";
         if (ipAddress == null) ipAddress = "0.0.0.0";
+        if (action == null || action.trim().isEmpty()) {
+            action = "UNKNOWN_ACTION";
+        }
+        if (details == null) {
+            details = "";
+        }
         AuditLog logEntry = new AuditLog(username, action, details, ipAddress);
-        auditLogRepository.save(logEntry);
-        logger.info("Audit: User '{}' | IP '{}' | Action '{}'", username, ipAddress, action);
+        try {
+            auditLogRepository.save(logEntry);
+            logger.info("Audit: User '{}' | IP '{}' | Action '{}'", username, ipAddress, action);
+        } catch (Exception e) {
+            // Prevent audit failure from crashing the main thread (though @Async handles most isolation)
+            logger.error("Failed to save audit log", e);
+        }
     }
 
     /**

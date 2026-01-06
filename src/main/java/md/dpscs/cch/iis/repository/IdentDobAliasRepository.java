@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface IdentDobAliasRepository extends JpaRepository<IdentDobAlias, Long> {
     List<IdentDobAlias> findByMaster_SystemId(Long systemId);
+    void deleteByMaster_SystemId(Long systemId);
 }
