@@ -55,6 +55,11 @@ public class ReferenceDataController {
         return ResponseEntity.ok(referenceDataService.getSkinTones());
     }
 
+    @GetMapping("/misc-prefixes")
+    public ResponseEntity<List<String>> getMiscPrefixes() {
+        return ResponseEntity.ok(referenceDataService.getMiscNumberPrefixes());
+    }
+
     @GetMapping("/doctypes")
     public ResponseEntity<?> getReferenceTypes() {
         return ResponseEntity.ok(referenceDataService.getReferenceTypeCodes());

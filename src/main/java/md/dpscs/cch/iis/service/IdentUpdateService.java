@@ -294,8 +294,7 @@ public class IdentUpdateService {
 
                 String type = docDto.getDocumentType().toUpperCase().trim();
 
-                // B. Strict Code Validation (Business Rule)
-                // Reject codes not defined in IIREFTAB or dynamic logic
+                // B. Strict Code Validation
                 if (!referenceDataService.isValidReferenceType(type)) {
                     throw new IllegalArgumentException("Invalid Reference Document Type: " + type);
                 }

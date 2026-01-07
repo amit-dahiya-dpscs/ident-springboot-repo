@@ -23,8 +23,10 @@ public class ReferenceDataService {
     private final EyeCodeRepository eyeRepo;
     private final HairCodeRepository hairRepo;
     private final SkinCodeRepository skinRepo;
+
     private final Map<String, String> documentTypeMap = new HashMap<>();
     private final List<String> validCodesList = new ArrayList<>();
+    private final List<String> miscPrefixesList = new ArrayList<>();
 
     @Transactional(readOnly = true)
     @Cacheable("countries")
@@ -102,8 +104,34 @@ public class ReferenceDataService {
     @PostConstruct
     public void init() {
         initializeReferenceMap();
+        initializeMiscPrefixes();
         validCodesList.addAll(documentTypeMap.keySet());
         Collections.sort(validCodesList);
+    }
+
+    /**
+     * Contains the specific valid identifier prefixes.
+     */
+    private void initializeMiscPrefixes() {
+        List<String> codes = Arrays.asList(
+                "AF-", "AR-", "AS-", "CG-", "MC-",
+                "MD-", "MDA", "MDB", "MDC", "MDD", "MDE", "MDF", "MDG", "MDH", "MDI", "MDJ", "MDK", "MDL", "MDM", "MDN", "MDO", "MDP", "MDQ", "MDR", "MDS", "MDT", "MDU", "MDV", "MDW", "MDX", "MDY", "MDZ",
+                "MP-", "NS-", "OA-", "PP-", "PS-", "SS-", "VA-"
+        );
+        miscPrefixesList.addAll(codes);
+        Collections.sort(miscPrefixesList);
+    }
+
+    public List<String> getMiscNumberPrefixes() {
+        return miscPrefixesList;
+    }
+
+    /**
+     * Validates if the provided prefix is in the allowed MNU table.
+     */
+    public boolean isValidMiscPrefix(String prefix) {
+        if (prefix == null) return false;
+        return miscPrefixesList.contains(prefix.toUpperCase());
     }
 
     /**
