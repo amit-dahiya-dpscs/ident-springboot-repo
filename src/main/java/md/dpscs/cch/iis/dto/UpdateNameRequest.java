@@ -5,6 +5,11 @@ import lombok.Data;
 
 @Data
 public class UpdateNameRequest {
+
+    private Long id;
+
+    private Boolean isMarkedForDeletion;
+
     @NotBlank(message = "Last Name is required")
     private String lastName;
 
@@ -13,6 +18,7 @@ public class UpdateNameRequest {
 
     private String middleName;
 
-    // Used for the UCN trigger logic in II1100C
+    private String nameType; // 'A' = Alias, 'P' = Primary
+
     private String ucn;
 }

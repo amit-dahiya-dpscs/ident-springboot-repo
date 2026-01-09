@@ -225,4 +225,20 @@ public class ReferenceDataService {
     public List<String> getReferenceTypeCodes() {
         return validCodesList;
     }
+
+    /**
+     * Validates if the provided Race Code exists in the reference table.
+     */
+    public boolean isValidRaceCode(String code) {
+        if (code == null || code.trim().isEmpty()) return false;
+        return getRaceCodes().containsKey(code.toUpperCase());
+    }
+
+    /**
+     * Validates if the provided Sex Code exists in the reference table.
+     */
+    public boolean isValidSexCode(String code) {
+        if (code == null || code.trim().isEmpty()) return false;
+        return getSexCodes().containsKey(code.toUpperCase());
+    }
 }

@@ -46,4 +46,7 @@ public class IdentName {
 
     @Column(name = "SoundexCode")
     private String soundexCode;
+
+    @Column(name = "SequenceNumber")
+    private Integer sequenceNumber;
 }

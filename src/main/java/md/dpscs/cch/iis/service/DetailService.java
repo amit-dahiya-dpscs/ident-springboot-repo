@@ -178,6 +178,7 @@ public class DetailService {
     // --- Mappers (Existing) ---
     private NameDTO mapName(IdentName entity) {
         NameDTO dto = new NameDTO();
+        dto.setId(entity.getNameId());
         dto.setNameType(entity.getNameType());
         dto.setLastName(entity.getLastName());
         dto.setFirstName(entity.getFirstName());

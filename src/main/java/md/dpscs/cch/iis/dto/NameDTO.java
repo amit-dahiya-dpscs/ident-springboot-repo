@@ -6,6 +6,7 @@ import java.time.LocalDate;
 
 @Data
 public class NameDTO {
+    private Long id;
     private String nameType; // 'P' = Primary, 'A' = Alias
     private String lastName;
     private String firstName;

@@ -50,7 +50,15 @@ public class IdentUpdateService {
         IdentMaster master = masterRepo.findById(systemId)
                 .orElseThrow(() -> new IllegalArgumentException("Record not found for SystemID: " + systemId));
 
-        // 1. Update Master Record Fields
+        // --- 1. Mainframe Validation Logic (II1100C) ---
+        if (StringUtils.hasText(request.getRace()) && !referenceDataService.isValidRaceCode(request.getRace())) {
+            throw new IllegalArgumentException("Invalid Race Code: " + request.getRace());
+        }
+        if (StringUtils.hasText(request.getSex()) && !referenceDataService.isValidSexCode(request.getSex())) {
+            throw new IllegalArgumentException("Invalid Sex Code: " + request.getSex());
+        }
+
+        // --- 2. Update Master Record ---
         master.setRaceCode(request.getRace());
         master.setSexCode(request.getSex());
         master.setHeight(request.getHeight());
@@ -62,22 +70,11 @@ public class IdentUpdateService {
         master.setCitizenshipCode(request.getCitizenship());
         master.setComments(request.getComments());
 
-        // 2. Logic: UCN/FBI Number Trigger
-        if (StringUtils.hasText(request.getFbiNumber())) {
-            master.setFbiNumber(request.getFbiNumber());
-            master.setRecordType("C"); // Criminal
-        } else {
-            // Only clear if explicitly sent as empty
-            if (request.getFbiNumber() != null) {
-                master.setFbiNumber(null);
-                master.setRecordType("N"); // Non-Criminal
-            }
-        }
-
+        // Update timestamp
         master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
 
-        // 3. Update Primary Name Record
+        // --- 3. Sync Primary Name Demographics ---
         IdentName primaryName = getPrimaryName(systemId);
         primaryName.setRaceCode(request.getRace());
         primaryName.setSexCode(request.getSex());
@@ -98,9 +95,27 @@ public class IdentUpdateService {
      */
     @Transactional
     public void updateTrueName(Long systemId, UpdateNameRequest request, String username, String ipAddress) {
+        // 1. Fetch Primary Name and Master Record
         IdentName primaryName = getPrimaryName(systemId);
+        IdentMaster master = primaryName.getMaster();
 
-        // 1. Validation: Conflict Check
+        // 2. Update UCN (FRD Requirement: "Included ‘UCN’ field requirements in ‘Name’ section")
+        // Logic: Only update if the field was provided.
+        if (request.getUcn() != null) {
+            String newUcn = request.getUcn().trim();
+            if (!newUcn.isEmpty()) {
+                master.setFbiNumber(newUcn);
+                // Mainframe Rule: Adding UCN often implies Criminal Record Type if currently Non-Criminal
+                if ("N".equals(master.getRecordType())) {
+                    master.setRecordType("C");
+                }
+            } else {
+                // Explicitly cleared by user
+                master.setFbiNumber(null);
+            }
+        }
+
+        // 3. Name Conflict Check (Cannot rename Primary to an existing Alias)
         boolean aliasConflict = nameRepo.findByMaster_SystemId(systemId).stream()
                 .filter(n -> "A".equals(n.getNameType()))
                 .anyMatch(alias -> isSameName(alias, request));
@@ -109,7 +124,7 @@ public class IdentUpdateService {
             throw new IllegalArgumentException("This name is already used as an alias.");
         }
 
-        // 2. Update Fields
+        // 4. Update Name Fields
         primaryName.setLastName(request.getLastName().toUpperCase());
         primaryName.setFirstName(request.getFirstName().toUpperCase());
 
@@ -117,18 +132,17 @@ public class IdentUpdateService {
         primaryName.setMiddleName(mid);
         primaryName.setMiddleInitial(!mid.isEmpty() ? mid.substring(0, 1) : "");
 
-        // 3. Recalculate Soundex
+        // 5. Recalculate Soundex (Legacy Rule: Always recalc on name change)
         String newSoundex = utils.calculateStandardSoundex(primaryName.getLastName());
         primaryName.setSoundexCode(newSoundex);
 
+        // 6. Save & Log
         nameRepo.save(primaryName);
 
-        // 4. Update Master Timestamp
-        IdentMaster master = primaryName.getMaster();
         master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
 
-        auditService.logAction(username, ipAddress, "UPDATE_TRUE_NAME", "Updated Name for SID: " + master.getSid());
+        auditService.logAction(username, ipAddress, "UPDATE_TRUE_NAME", "Updated Name/UCN for SID: " + master.getSid());
     }
 
     /**
@@ -141,39 +155,78 @@ public class IdentUpdateService {
 
         IdentName primaryName = getPrimaryName(systemId);
 
-        // 1. Delete Existing Aliases
-        List<IdentName> existingAliases = nameRepo.findByMaster_SystemId(systemId).stream()
-                .filter(n -> "A".equals(n.getNameType()))
-                .collect(Collectors.toList());
-        nameRepo.deleteAll(existingAliases);
-
-        // 2. Insert New Aliases
         if (aliases != null) {
-            for (UpdateNameRequest aliasReq : aliases) {
-                if (isSameName(primaryName, aliasReq)) {
-                    throw new IllegalArgumentException("Alias cannot be the same as the primary name: " + aliasReq.getLastName());
+            for (UpdateNameRequest req : aliases) {
+                // --- DELETE LOGIC (Driven by React Flag) ---
+                if (Boolean.TRUE.equals(req.getIsMarkedForDeletion())) {
+                    if (req.getId() != null) {
+                        nameRepo.deleteById(req.getId());
+                        auditService.logAction(username, ipAddress, "DELETE_ALIAS", "Deleted Alias ID: " + req.getId());
+                    }
+                    continue; // Stop processing this record
                 }
 
-                IdentName newAlias = new IdentName();
-                newAlias.setMaster(master);
-                newAlias.setNameType("A");
-                newAlias.setLastName(aliasReq.getLastName().toUpperCase());
-                newAlias.setFirstName(aliasReq.getFirstName().toUpperCase());
+                // --- VALIDATION: Duplicate Name Check ---
+                // (Matches Mainframe II0800C logic which prevents -803 SQL Errors)
+                if (isSameName(primaryName, req)) {
+                    throw new IllegalArgumentException("Alias cannot be the same as the primary name: " + req.getLastName());
+                }
 
-                String mid = aliasReq.getMiddleName() != null ? aliasReq.getMiddleName().toUpperCase() : "";
-                newAlias.setMiddleName(mid);
-                newAlias.setMiddleInitial(!mid.isEmpty() ? mid.substring(0, 1) : "");
+                // Check against existing aliases in DB to prevent duplicates
+                // Note: You need to implement this custom query in your Repository
+                boolean exists = nameRepo.existsByMaster_SystemIdAndLastNameAndFirstNameAndMiddleNameAndNameType(
+                        systemId,
+                        req.getLastName().toUpperCase(),
+                        req.getFirstName().toUpperCase(),
+                        req.getMiddleName() != null ? req.getMiddleName().toUpperCase() : "",
+                        "A"
+                );
 
-                // Aliases inherit Demographics
-                newAlias.setRaceCode(primaryName.getRaceCode());
-                newAlias.setSexCode(primaryName.getSexCode());
-                newAlias.setDateOfBirth(primaryName.getDateOfBirth());
-                newAlias.setSoundexCode(utils.calculateStandardSoundex(newAlias.getLastName()));
+                // Allow update if it's the SAME record (id matches), otherwise block new duplicates
+                if (exists && req.getId() == null) {
+                    throw new IllegalArgumentException("Duplicate Alias Name: " + req.getLastName() + ", " + req.getFirstName());
+                }
 
-                nameRepo.save(newAlias);
+                // --- CREATE / UPDATE LOGIC ---
+                IdentName aliasToSave;
+
+                if (req.getId() != null) {
+                    // Update Existing
+                    aliasToSave = nameRepo.findById(req.getId())
+                            .orElseThrow(() -> new IllegalArgumentException("Alias ID not found: " + req.getId()));
+                } else {
+                    // Insert New
+                    aliasToSave = new IdentName();
+                    aliasToSave.setMaster(master);
+                    aliasToSave.setNameType("A");
+
+                    // Mainframe II0800C Requirement: Generate Sequence Number
+                    // You need to implement findMaxSequenceBySystemId in Repository
+                    Integer maxSeq = nameRepo.findMaxSequenceBySystemId(systemId);
+                    aliasToSave.setSequenceNumber(maxSeq != null ? maxSeq + 1 : 1);
+                }
+
+                // Map Fields
+                aliasToSave.setLastName(req.getLastName().toUpperCase());
+                aliasToSave.setFirstName(req.getFirstName().toUpperCase());
+
+                String mid = req.getMiddleName() != null ? req.getMiddleName().toUpperCase() : "";
+                aliasToSave.setMiddleName(mid);
+                aliasToSave.setMiddleInitial(!mid.isEmpty() ? mid.substring(0, 1) : "");
+
+                // Inherit Demographics from Primary (per FRD/Mainframe logic)
+                aliasToSave.setRaceCode(primaryName.getRaceCode());
+                aliasToSave.setSexCode(primaryName.getSexCode());
+                aliasToSave.setDateOfBirth(primaryName.getDateOfBirth());
+
+                // Calculate Soundex
+                aliasToSave.setSoundexCode(utils.calculateStandardSoundex(aliasToSave.getLastName()));
+
+                nameRepo.save(aliasToSave);
             }
         }
-        auditService.logAction(username, ipAddress, "UPDATE_ALIASES", "Updated " + (aliases != null ? aliases.size() : 0) + " aliases.");
+
+        auditService.logAction(username, ipAddress, "UPDATE_ALIASES", "Updated aliases for SID: " + master.getSid());
     }
 
     /**

@@ -13,6 +13,13 @@ public interface IdentNameRepository extends JpaRepository<IdentName, Long> {
 
     List<IdentName> findByMaster_SystemId(Long systemId);
 
+    @Query("SELECT COALESCE(MAX(n.sequenceNumber), 0) FROM IdentName n WHERE n.master.systemId = :systemId")
+    Integer findMaxSequenceBySystemId(@Param("systemId") Long systemId);
+
+    boolean existsByMaster_SystemIdAndLastNameAndFirstNameAndMiddleNameAndNameType(
+            Long systemId, String lastName, String firstName, String middleName, String nameType
+    );
+
     @Query("SELECT n FROM IdentName n JOIN n.master m WHERE m.sid = :sid AND n.nameType = 'P'")
     Page<IdentName> findBySidPrimary(@Param("sid") String sid, Pageable pageable);
 

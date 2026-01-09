@@ -30,12 +30,12 @@ public class ReferenceDataController {
         return ResponseEntity.ok(referenceDataService.getAllCautionCodes());
     }
 
-    @GetMapping("/race")
+    @GetMapping("/races")
     public ResponseEntity<?> getRaceCodes() {
         return ResponseEntity.ok(referenceDataService.getRaceCodes());
     }
 
-    @GetMapping("/sex")
+    @GetMapping("/sexes")
     public ResponseEntity<?> getSexCodes() {
         return ResponseEntity.ok(referenceDataService.getSexCodes());
     }
@@ -45,12 +45,12 @@ public class ReferenceDataController {
         return ResponseEntity.ok(referenceDataService.getEyeColors());
     }
 
-    @GetMapping("/hair")
+    @GetMapping("/hairs")
     public ResponseEntity<?> getHairColors() {
         return ResponseEntity.ok(referenceDataService.getHairColors());
     }
 
-    @GetMapping("/skin")
+    @GetMapping("/skins")
     public ResponseEntity<?> getSkinTones() {
         return ResponseEntity.ok(referenceDataService.getSkinTones());
     }
