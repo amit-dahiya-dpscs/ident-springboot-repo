@@ -6,6 +6,7 @@ import java.time.LocalDate;
 
 @Data
 public class DocumentDTO {
+    private Long id;
     private String category; // "ARREST", "INDEX", "REFER"
     private String documentType;
     private String documentNumber;

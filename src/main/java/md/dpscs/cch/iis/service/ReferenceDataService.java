@@ -23,7 +23,9 @@ public class ReferenceDataService {
     private final EyeCodeRepository eyeRepo;
     private final HairCodeRepository hairRepo;
     private final SkinCodeRepository skinRepo;
+    private final SmtCodeRepository smtRepo;
 
+    // --- In-Memory Caches ---
     private final Map<String, String> documentTypeMap = new HashMap<>();
     private final List<String> validCodesList = new ArrayList<>();
     private final List<String> miscPrefixesList = new ArrayList<>();
@@ -44,6 +46,12 @@ public class ReferenceDataService {
                         CautionCode::getDescription,
                         (existing, replacement) -> existing // Merge function (keep existing)
                 ));
+    }
+
+    public boolean isValidCautionCode(String code) {
+        if (code == null || code.trim().isEmpty()) return false;
+        // Check against the keys of the cached map
+        return getAllCautionCodes().containsKey(code.toUpperCase());
     }
 
     @Transactional(readOnly = true)
@@ -138,8 +146,7 @@ public class ReferenceDataService {
      * Loads the strict list of codes derived from IIREFTAB and II0900C logic.
      */
     private void initializeReferenceMap() {
-        // --- 1. ARREST Category (SEGARRST) ---
-        // Source: IIREFTAB
+        // --- 1. ARREST Category ---
         addCode("CAR", "ARREST");
         addCode("JUV", "ARREST");
 
@@ -240,5 +247,30 @@ public class ReferenceDataService {
     public boolean isValidSexCode(String code) {
         if (code == null || code.trim().isEmpty()) return false;
         return getSexCodes().containsKey(code.toUpperCase());
+    }
+
+    /**
+     * Caches all SMT codes from the DB.
+     * Key = SMT_CD
+     * Value = SMT_CATEGORY + " " + SMT_BREAKDOWN
+     */
+    @Transactional(readOnly = true)
+    @Cacheable("smtCodes")
+    public Map<String, String> getAllSmtCodes() {
+        return smtRepo.findAllByOrderByCodeAsc().stream()
+                .collect(Collectors.toMap(
+                        SmtCode::getCode,
+                        SmtCode::getFullDescription, // Concatenates Category + Breakdown
+                        (existing, replacement) -> existing
+                ));
+    }
+
+    /**
+     * Validates if the provided SMT Code exists in the reference table.
+     * Used by IdentUpdateService to enforce legacy PST_SMTCD validation.
+     */
+    public boolean isValidSmtCode(String code) {
+        if (code == null || code.trim().isEmpty()) return false;
+        return getAllSmtCodes().containsKey(code.toUpperCase());
     }
 }

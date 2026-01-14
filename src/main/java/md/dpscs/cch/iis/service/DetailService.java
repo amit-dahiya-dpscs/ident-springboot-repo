@@ -107,7 +107,7 @@ public class DetailService {
         // 2. Map Driver's Licenses as "Misc Numbers" (Type = "DL")
         List<SecondaryIDDTO> dlAsMisc = dlFut.join().stream()
                 .map(this::mapDlToMisc)
-                .collect(Collectors.toList());
+                .toList();
 
         // 3. Combine them
         miscList.addAll(dlAsMisc);
@@ -124,7 +124,7 @@ public class DetailService {
 
         // --- Fingerprint Pattern Type (MAFIS) ---
         IdentName primaryName = dto.getNamesAndAliases().isEmpty() ? null :
-                namesFut.join().stream().filter(n -> "P".equals(n.getNameType())).findFirst().orElse(namesFut.join().get(0));
+                namesFut.join().stream().filter(n -> "P".equals(n.getNameType())).findFirst().orElse(namesFut.join().getFirst());
 
         if (primaryName != null && primaryName.getMafisFingerprint() != null) {
             String rawFp = primaryName.getMafisFingerprint();
@@ -227,10 +227,9 @@ public class DetailService {
         SecondaryIDDTO dto = new SecondaryIDDTO();
 
         dto.setIdType(entity.getMiscNumType());
-        String type = entity.getMiscNumType() != null ? entity.getMiscNumType().trim() : "";
         String num = entity.getMiscNumber() != null ? entity.getMiscNumber().trim() : "";
 
-        dto.setIdValue((type + num).trim());
+        dto.setIdValue((num).trim());
 
         return dto;
     }
@@ -274,6 +273,7 @@ public class DetailService {
 
     private DocumentDTO mapDoc(IdentDocument entity) {
         DocumentDTO dto = new DocumentDTO();
+        dto.setId(entity.getDocId());
         dto.setDocumentType(entity.getDocumentType());
         dto.setDocumentNumber(entity.getDocumentNumber());
         dto.setDocumentDate(entity.getDocumentDate());

@@ -64,4 +64,9 @@ public class ReferenceDataController {
     public ResponseEntity<?> getReferenceTypes() {
         return ResponseEntity.ok(referenceDataService.getReferenceTypeCodes());
     }
+
+    @GetMapping("/smt-codes")
+    public ResponseEntity<?> getSmtCodes() {
+        return ResponseEntity.ok(referenceDataService.getAllSmtCodes());
+    }
 }
