@@ -52,7 +52,7 @@ public class UpdateDemographicsRequest {
     @Size(max = 25) // Adjusted for standard street name length
     private String streetName;
 
-    @Size(max = 2)
+    @Size(max = 3)
     private String streetSuffix;
 
     @Size(max = 20)
