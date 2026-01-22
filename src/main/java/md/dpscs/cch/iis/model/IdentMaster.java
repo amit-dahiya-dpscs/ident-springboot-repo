@@ -56,6 +56,10 @@ public class IdentMaster {
     private String dnaFlag;
     @Column(name = "DisseminationFlag")
     private String disseminationFlag;
+    @Column(name = "IIIFlag", length = 1)
+    private String iiiStatus;
+    @Column(name = "RapbackFlag", length = 1)
+    private String rapbackSubscriptionIndicator;
     @Column(name = "Comments")
     private String comments;
 

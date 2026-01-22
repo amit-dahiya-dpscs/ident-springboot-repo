@@ -28,7 +28,7 @@ public class LocalConfig {
                 .username("identtest")
                 .password(passwordEncoder.encode("Ident@1234"))
                 // Assign the specific roles needed for editing and deleting.
-                .roles("CCH IDENT EDIT USERS", "CCH IDENT DELETE USERS")
+                .roles("CCH IDENT EDIT USERS", "CCH IDENT DELETE USERS", "CCH EXPUNGEMENT UNIT", "CCH DATA INTEGRITY")
                 .build();
 
         return new InMemoryUserDetailsManager(qaUser);
