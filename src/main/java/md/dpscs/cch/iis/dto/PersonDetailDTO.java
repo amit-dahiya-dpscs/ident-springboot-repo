@@ -12,6 +12,7 @@ public class PersonDetailDTO {
     private String sid;
     private String fbiNumber;
     private String recordType; // 'C' = Criminal, 'J' = Juvenile
+    private String rapbackSubscriptionIndicator;
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "MM/dd/yyyy")
     private LocalDateTime lastUpdated;
     private String cautionFlag; // "YES" or "NO" based on flags

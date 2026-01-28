@@ -73,6 +73,8 @@ public class DetailService {
         // FIX: Map Record Type Code to Description (Source 1785)
         dto.setRecordType(mapRecordType(master.getRecordType()));
 
+        dto.setRapbackSubscriptionIndicator(master.getRapbackSubscriptionIndicator());
+
         dto.setLastUpdated(master.getLastUpdateDate());
         dto.setComments(master.getComments());
 
