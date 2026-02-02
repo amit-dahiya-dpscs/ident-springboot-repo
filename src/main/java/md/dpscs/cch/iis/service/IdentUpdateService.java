@@ -91,7 +91,15 @@ public class IdentUpdateService {
         }
         nameRepo.save(primaryName);
 
-        // 4. Update Address
+        // --- 4. Update Caution Flag ---
+        if (request.getCautionFlag() != null) {
+            List<String> cautions = StringUtils.hasText(request.getCautionFlag())
+                    ? List.of(request.getCautionFlag())
+                    : List.of(); // Send empty list to clear if blank
+            handleCautions(master, cautions);
+        }
+
+        // 5. Update Address
         updateAddress(master, request);
 
         auditService.logAction(username, ipAddress, "UPDATE_DEMOGRAPHICS", "Updated SID: " + master.getSid());

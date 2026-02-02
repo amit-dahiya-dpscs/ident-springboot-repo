@@ -10,6 +10,9 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/expungement")
 @RequiredArgsConstructor
@@ -25,8 +28,22 @@ public class ExpungementController {
         req.setUsername(user.getUsername());
         req.setUserIp(request.getRemoteAddr());
 
-        expungementService.processExpungement(req);
+        // Capture the potential warning message from the service
+        String warningMessage = expungementService.processExpungement(req);
 
-        return ResponseEntity.ok().body("{\"message\": \"Expungement processed successfully.\"}");
+        Map<String, String> response = new HashMap<>();
+
+        if (warningMessage != null) {
+            // Case: Success with Warning (FBI Owned)
+            response.put("status", "WARNING");
+            response.put("message", "SID deleted successfully.");
+            response.put("detail", warningMessage); // "REC IS FBI OWNED - DRS MSG NOT SENT"
+        } else {
+            // Case: Standard Success
+            response.put("status", "SUCCESS");
+            response.put("message", "Expungement processed successfully.");
+        }
+
+        return ResponseEntity.ok(response);
     }
 }

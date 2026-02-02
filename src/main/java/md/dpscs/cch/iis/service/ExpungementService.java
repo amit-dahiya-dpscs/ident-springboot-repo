@@ -44,7 +44,7 @@ public class ExpungementService {
     );
 
     @Transactional
-    public void processExpungement(ExpungementRequest req) {
+    public String processExpungement(ExpungementRequest req) {
         IdentMaster master = masterRepo.findById(req.getSystemId())
                 .orElseThrow(() -> new IllegalArgumentException("System ID not found: " + req.getSystemId()));
 
@@ -55,50 +55,74 @@ public class ExpungementService {
         switch (req.getDeleteType().toUpperCase()) {
             case "PART_CANCEL":
                 processPartCancel(master, req, crimCount);
-                break;
+                return null; // No warning for Part Cancel
             case "DOWNGRADE":
                 processDowngrade(master, req, crimCount, nonCrimCount);
-                break;
+                return null;
             case "CANCEL_ENTIRE":
-                processCancelEntire(master, req, crimCount, nonCrimCount);
-                break;
+                return processCancelEntire(master, req, crimCount, nonCrimCount);
             case "PARTIAL":
                 processPartial(req);
-                break;
+                return null;
             case "CANCEL":
                 processCancel(req);
-                break;
+                return null;
             default:
                 throw new IllegalArgumentException("Invalid Delete Type: " + req.getDeleteType());
         }
     }
 
-    private void processCancelEntire(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
+    private String processCancelEntire(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
+        // VALIDATION: Ensure strictly ONE criminal event and ZERO non-criminal events exist.
         if (crimCount > 1) {
             throw new IllegalStateException("MULTIPLE ARREST EVENTS EXIST – CAN NOT PERFORM AN EXPUNGE ENTIRE.");
         }
-        if (crimCount == 0 && nonCrimCount > 0) {
+
+        // FIX: This check now blocks if there are ANY non-criminal records (e.g. 1 CAR + 1 MAF),
+        // or if there are only non-criminal records (0 Criminal).
+        if (nonCrimCount > 0 || crimCount == 0) {
             throw new IllegalStateException("NON-CRIMINAL EVENTS EXIST - CAN NOT PERFORM AN EXPUNGE ENTIRE ON THIS RECORD!");
         }
 
         // Get Latest Criminal Date (LocalDate)
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
+        String warningMessage = null;
 
+        // FBI OWNERSHIP CHECK
         if (fbiMasterRepo.existsBySid(master.getSid())) {
+            // 1. Log to FBI Downgrade table (Modern Requirement)
             createFbiDowngradeLog(master, req, eventDate);
+
+            // 2. Log to Standard Expungement table with Indicator 'X' (Legacy Parity with II0500C)
+            // This ensures the record exists in the main log but marks it as FBI-owned ('X') so IP07 skips DRS.
+            createStandardExpungementLog(master, req, "EXP", "X", eventDate);
+
+            // 3. Set Warning Message
+            warningMessage = "REC IS FBI OWNED - DRS MSG NOT SENT";
+
+            // NOTE: We do NOT call triggerIp07Transaction() here, effectively suppressing the DRS message.
         } else {
+            // NON-FBI OWNED Logic
             if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
+                // Check if subject is on III (Status S or M)
                 if ("S".equalsIgnoreCase(master.getIiiStatus()) || "M".equalsIgnoreCase(master.getIiiStatus())) {
                     throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE FBI # IS MISSING.");
                 }
             }
+            // Log with 'E' for Cancel Entire
             createStandardExpungementLog(master, req, "EXP", "E", eventDate);
+
+            // Trigger downstream (IPS/IP07) processing
             triggerIp07Transaction(master.getSid());
         }
 
+        // Perform the deletion
         deleteAllChildRecords(master.getSystemId());
         masterRepo.delete(master);
+
         auditService.logAction(req.getUsername(), req.getUserIp(), "CANCEL_ENTIRE", "Deleted Entire SID: " + master.getSid());
+
+        return warningMessage;
     }
 
     private void processDowngrade(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
@@ -137,14 +161,31 @@ public class ExpungementService {
 
         docRepo.delete(doc);
 
-        createStandardExpungementLog(master, req, "PAR", "C", eventDate);
+        createStandardExpungementLog(master, req, "EXP", "C", eventDate);
         triggerIp07Transaction(master.getSid());
         auditService.logAction(req.getUsername(), req.getUserIp(), "PART_CANCEL", "Deleted Doc ID: " + req.getDocumentId());
     }
 
     private void processPartial(ExpungementRequest req) {
         if (req.getDocumentId() == null) throw new IllegalArgumentException("Document ID required.");
-        docRepo.deleteById(req.getDocumentId());
+
+        // 1. Fetch the document BEFORE deleting it to get the Event Date
+        IdentDocument doc = docRepo.findById(req.getDocumentId())
+                .orElseThrow(() -> new IllegalArgumentException("Document not found with ID: " + req.getDocumentId()));
+
+        LocalDate eventDate = doc.getDocumentDate();
+
+        // 2. Fetch Master record (needed for the log method)
+        IdentMaster master = doc.getMaster();
+
+        // 3. Delete the record
+        docRepo.delete(doc);
+
+        // 4. Log to T_IDENT_EXPUNGEMENT (IPT_RWEXP)
+        // Using 'EXP' for Process Type and 'P' for Indicator
+        createStandardExpungementLog(master, req, "EXP", "P", eventDate);
+
+        // 5. Audit
         auditService.logAction(req.getUsername(), req.getUserIp(), "PARTIAL", "Partial expungement Doc ID: " + req.getDocumentId());
     }
 

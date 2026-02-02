@@ -39,6 +39,9 @@ public class UpdateDemographicsRequest {
 
     private String comments;
 
+    @Size(max = 1, message = "Caution flag must be 1 character")
+    private String cautionFlag;
+
     @Pattern(regexp = "^$|^[A-Za-z0-9]+$", message = "Invalid FBI Number format")
     private String fbiNumber;
 
