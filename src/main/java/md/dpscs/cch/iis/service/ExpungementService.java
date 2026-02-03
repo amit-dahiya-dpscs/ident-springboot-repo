@@ -169,20 +169,31 @@ public class ExpungementService {
     private void processPartial(ExpungementRequest req) {
         if (req.getDocumentId() == null) throw new IllegalArgumentException("Document ID required.");
 
-        // 1. Fetch the document BEFORE deleting it to get the Event Date
+        // 1. Fetch the document BEFORE deleting it
         IdentDocument doc = docRepo.findById(req.getDocumentId())
                 .orElseThrow(() -> new IllegalArgumentException("Document not found with ID: " + req.getDocumentId()));
 
+        IdentMaster master = doc.getMaster();
         LocalDate eventDate = doc.getDocumentDate();
 
-        // 2. Fetch Master record (needed for the log method)
-        IdentMaster master = doc.getMaster();
+        // Check if this document is a Criminal Type
+        boolean isCriminalDoc = CRIMINAL_TYPES.contains(doc.getDocumentType());
+
+        if (isCriminalDoc) {
+            // Count how many criminal records currently exist
+            long crimCount = docRepo.countByMaster_SystemIdAndDocumentTypeIn(master.getSystemId(), CRIMINAL_TYPES);
+
+            // If this is the LAST criminal record, block the Partial Expungement.
+            // The user MUST use 'Downgrade' (to switch Header to 'N') or 'Cancel Entire'.
+            if (crimCount <= 1) {
+                throw new IllegalStateException("Cannot perform PARTIAL expungement on the last criminal event. Use 'Downgrade' to properly update the SID status.");
+            }
+        }
 
         // 3. Delete the record
         docRepo.delete(doc);
 
         // 4. Log to T_IDENT_EXPUNGEMENT (IPT_RWEXP)
-        // Using 'EXP' for Process Type and 'P' for Indicator
         createStandardExpungementLog(master, req, "EXP", "P", eventDate);
 
         // 5. Audit
@@ -191,7 +202,22 @@ public class ExpungementService {
 
     private void processCancel(ExpungementRequest req) {
         if (req.getDocumentId() == null) throw new IllegalArgumentException("Document ID required.");
-        docRepo.deleteById(req.getDocumentId());
+
+        // 1. Fetch document to check type
+        IdentDocument doc = docRepo.findById(req.getDocumentId())
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+
+        // 2. Count current criminal records
+        long crimCount = docRepo.countByMaster_SystemIdAndDocumentTypeIn(doc.getMaster().getSystemId(), CRIMINAL_TYPES);
+
+        // 3. Check if this is the LAST criminal record
+        boolean isCriminalDoc = CRIMINAL_TYPES.contains(doc.getDocumentType());
+        if (isCriminalDoc && crimCount <= 1) {
+            // BLOCK IT: Force user to use Downgrade to ensure Header/FBI logic runs
+            throw new IllegalStateException("Cannot CANCEL the last criminal event. You must use 'Downgrade' to ensure the SID status is updated correctly.");
+        }
+
+        docRepo.delete(doc);
         auditService.logAction(req.getUsername(), req.getUserIp(), "CANCEL", "Cancelled Doc ID: " + req.getDocumentId());
     }
 
