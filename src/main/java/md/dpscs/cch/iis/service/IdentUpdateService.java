@@ -582,16 +582,20 @@ public class IdentUpdateService {
                 }
 
                 String type = docDto.getDocumentType().toUpperCase().trim();
+                String number = docDto.getDocumentNumber().toUpperCase().trim();
+                LocalDate date = docDto.getDocumentDate();
 
                 if (!referenceDataService.isValidReferenceType(type)) {
                     throw new IllegalArgumentException("Invalid Reference Document Type: " + type);
                 }
 
-                boolean exists = documentRepo.existsByMaster_SystemIdAndDocumentTypeAndDocumentNumber(
-                        systemId, type, docDto.getDocumentNumber().toUpperCase().trim());
+                boolean exists = documentRepo.existsByMaster_SystemIdAndDocumentTypeAndDocumentNumberAndDocumentDate(
+                        systemId, type, number, date);
 
                 if (exists) {
-                    throw new IllegalArgumentException("Duplicate Reference found: " + type + " " + docDto.getDocumentNumber());
+                    throw new IllegalArgumentException(
+                            String.format("Duplicate Reference found: Type '%s', Number '%s', Date '%s' already exists.",
+                                    type, number, date));
                 }
 
                 IdentDocument doc = new IdentDocument();

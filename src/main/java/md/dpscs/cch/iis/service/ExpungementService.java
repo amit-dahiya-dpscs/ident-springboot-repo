@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -132,17 +133,41 @@ public class ExpungementService {
 
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
 
-        boolean isRapback = "R".equalsIgnoreCase(master.getRapbackSubscriptionIndicator());
+        boolean isRapback = "R".equalsIgnoreCase(master.getRapbackSubscriptionIndicator()) ||
+                "Y".equalsIgnoreCase(master.getRapbackSubscriptionIndicator());
+
         master.setRecordType("N");
+
         if (!isRapback) master.setFbiNumber(null);
+
+        if (req.getComments() != null) {
+            master.setComments(req.getComments());
+        }
+
+        master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
 
         docRepo.findByMaster_SystemId(master.getSystemId()).stream()
                 .filter(d -> CRIMINAL_TYPES.contains(d.getDocumentType()))
                 .forEach(docRepo::delete);
 
-        createStandardExpungementLog(master, req, "DWN", "D", eventDate);
-        triggerIp07Transaction(master.getSid());
+        boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+
+        if (isFbiOwned) {
+            // A. Log to FBI Downgrade Table (This was missing)
+            createFbiDowngradeLog(master, req, eventDate);
+
+            // B. Log to Standard Expungement with Indicator 'X' (FBI Owned)
+            // This mirrors the Cancel Entire logic for consistency
+            createStandardExpungementLog(master, req, "DWN", "X", eventDate);
+
+            // Note: We typically DO NOT trigger the standard State IP07 transaction
+            // if we are handing this off to the FBI workflow via the Downgrade Table.
+        } else {
+            // Standard State Downgrade
+            createStandardExpungementLog(master, req, "DWN", "D", eventDate);
+            triggerIp07Transaction(master.getSid());
+        }
         auditService.logAction(req.getUsername(), req.getUserIp(), "DOWNGRADE", "Downgraded SID: " + master.getSid());
     }
 
@@ -157,6 +182,12 @@ public class ExpungementService {
         boolean isCriminalDoc = CRIMINAL_TYPES.contains(doc.getDocumentType());
         if (isCriminalDoc && crimCount <= 1) {
             throw new IllegalStateException("Cannot delete the last criminal event via Part Cancel. Use 'Downgrade'.");
+        }
+
+        if (req.getComments() != null) {
+            master.setComments(req.getComments());
+            master.setLastUpdateDate(LocalDateTime.now());
+            masterRepo.save(master);
         }
 
         docRepo.delete(doc);
@@ -207,6 +238,8 @@ public class ExpungementService {
         IdentDocument doc = docRepo.findById(req.getDocumentId())
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
 
+        IdentMaster master = doc.getMaster();
+
         // 2. Count current criminal records
         long crimCount = docRepo.countByMaster_SystemIdAndDocumentTypeIn(doc.getMaster().getSystemId(), CRIMINAL_TYPES);
 
@@ -215,6 +248,12 @@ public class ExpungementService {
         if (isCriminalDoc && crimCount <= 1) {
             // BLOCK IT: Force user to use Downgrade to ensure Header/FBI logic runs
             throw new IllegalStateException("Cannot CANCEL the last criminal event. You must use 'Downgrade' to ensure the SID status is updated correctly.");
+        }
+
+        if (req.getComments() != null) {
+            master.setComments(req.getComments());
+            master.setLastUpdateDate(LocalDateTime.now());
+            masterRepo.save(master);
         }
 
         docRepo.delete(doc);
