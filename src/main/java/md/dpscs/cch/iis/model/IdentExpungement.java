@@ -55,6 +55,9 @@ public class IdentExpungement {
     private String ocaNumber;
 
     // --- Input Fields ---
+    @Column(name = "PCN", length = 15)
+    private String pcn;
+
     @Column(name = "COGENT_PCN", length = 15)
     private String cogentPcn;
 
@@ -131,4 +134,7 @@ public class IdentExpungement {
 
     @Column(name = "EVENT_DATE")
     private LocalDate eventDate;
+
+    @Column(name = "DATE_EXPUNG")
+    private LocalDateTime expungementDate;
 }

@@ -58,8 +58,7 @@ public class ExpungementService {
                 processPartCancel(master, req, crimCount);
                 return null; // No warning for Part Cancel
             case "DOWNGRADE":
-                processDowngrade(master, req, crimCount, nonCrimCount);
-                return null;
+                return processDowngrade(master, req, crimCount, nonCrimCount);
             case "CANCEL_ENTIRE":
                 return processCancelEntire(master, req, crimCount, nonCrimCount);
             case "PARTIAL":
@@ -105,10 +104,7 @@ public class ExpungementService {
         } else {
             // NON-FBI OWNED Logic
             if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
-                // Check if subject is on III (Status S or M)
-                if ("S".equalsIgnoreCase(master.getIiiStatus()) || "M".equalsIgnoreCase(master.getIiiStatus())) {
-                    throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE FBI # IS MISSING.");
-                }
+                throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE FBI # IS MISSING.");
             }
             // Log with 'E' for Cancel Entire
             createStandardExpungementLog(master, req, "EXP", "E", eventDate);
@@ -126,49 +122,86 @@ public class ExpungementService {
         return warningMessage;
     }
 
-    private void processDowngrade(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
-        if (crimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
-        if (crimCount > 1) throw new IllegalStateException("MULTIPLE ARREST EVENTS EXIST – CAN NOT PERFORM A DOWNGRADE. USE PART CANCEL.");
-        if (nonCrimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING NON-CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
+    private String processDowngrade(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
+        // 1. Legacy Record Counts Validation (II1000C - CHECK-MULT-RECS)
+        if (crimCount == 0) {
+            throw new IllegalStateException("MUST HAVE AN EXISTING CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
+        }
+        if (crimCount > 1) {
+            throw new IllegalStateException("MULTIPLE ARREST EVENTS EXIST – CAN NOT PERFORM A DOWNGRADE. USE PART CANCEL.");
+        }
+        if (nonCrimCount == 0) {
+            throw new IllegalStateException("MUST HAVE AN EXISTING NON-CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
+        }
 
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
+        String warningMessage = null;
+        String fbiLogIndicator; // 'D' for Downgrade, 'X' for FBI Owned/Blocked
 
+        // 2. Check FBI Ownership (AD.ADT_FBIMT Check)
+        // Legacy Source: II1000C [cite: 13563][cite_start], II0500C [cite: 1888]
+        boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+
+        // 3. Check Rapback Status
+        // Legacy Source: II0100C [cite: 7467] - Rapback records usually lock the UCN.
         boolean isRapback = "R".equalsIgnoreCase(master.getRapbackSubscriptionIndicator()) ||
                 "Y".equalsIgnoreCase(master.getRapbackSubscriptionIndicator());
 
-        master.setRecordType("N");
+        // 4. Notification Logic (DRS Message)
+        if (isFbiOwned) {
+            // --- FBI OWNED RECORD ---
+            // Rule: Suppress DRS message, Log as 'X', Warn User.
+            fbiLogIndicator = "X";
+            warningMessage = "REC IS FBI OWNED - DRS MSG NOT SENT";
 
-        if (!isRapback) master.setFbiNumber(null);
+            // Log to FBI Downgrade Table (AD.ADT_FBDGR)
+            createFbiDowngradeLog(master, req, eventDate);
 
+        } else {
+            // --- STATE OWNED RECORD ---
+            // Rule: Must have a valid FBI number to send a DRS Delete message.
+            if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
+                 // Legacy Source: II1000C [cite: 13571] - "NO DRS MSG WAS SENT – THE FBI # IS MISSING"
+                throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE UCN # IS MISSING.");
+            }
+
+            fbiLogIndicator = "E";
+
+            // Trigger DRS Message via IP07
+            triggerIp07Transaction(master.getSid());
+        }
+
+        // 5. Database Updates (IIV_IDENT01)
+        // Legacy Source: II1000C UPD-IDENT-SEGMENT [cite: 14407]
+        master.setRecordType("N"); // Set to Non-Criminal
+
+        // Legacy Rule: If Rapback, we cannot clear the UCN.
+        // If UCN remains, II1000C typically prevents reference deletion.
+        // However, assuming modernization implies intent to downgrade:
+        if (!isRapback) {
+            master.setFbiNumber(null); // Clear FBI Number
+        }
         if (req.getComments() != null) {
             master.setComments(req.getComments());
         }
-
         master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
 
+        // 6. Delete Criminal References
+        // Legacy Source: II1000C UPDATE-NAME-DLET-CRIM-REF [cite: 13496]
+        // Deletes records from AREST, INDEX, and REFER tables that match Criminal Types.
         docRepo.findByMaster_SystemId(master.getSystemId()).stream()
                 .filter(d -> CRIMINAL_TYPES.contains(d.getDocumentType()))
                 .forEach(docRepo::delete);
 
-        boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+        // 7. Log Transaction (IPT_RWEXP)
+        // Legacy Source: II1000C [cite: 14247] - Logs 'D' or 'X' based on ownership
+        createStandardExpungementLog(master, req, "EXP", fbiLogIndicator, eventDate);
 
-        if (isFbiOwned) {
-            // A. Log to FBI Downgrade Table (This was missing)
-            createFbiDowngradeLog(master, req, eventDate);
-
-            // B. Log to Standard Expungement with Indicator 'X' (FBI Owned)
-            // This mirrors the Cancel Entire logic for consistency
-            createStandardExpungementLog(master, req, "DWN", "X", eventDate);
-
-            // Note: We typically DO NOT trigger the standard State IP07 transaction
-            // if we are handing this off to the FBI workflow via the Downgrade Table.
-        } else {
-            // Standard State Downgrade
-            createStandardExpungementLog(master, req, "DWN", "D", eventDate);
-            triggerIp07Transaction(master.getSid());
-        }
+        // 8. Audit
         auditService.logAction(req.getUsername(), req.getUserIp(), "DOWNGRADE", "Downgraded SID: " + master.getSid());
+
+        return warningMessage;
     }
 
     private void processPartCancel(IdentMaster master, ExpungementRequest req, long crimCount) {
@@ -299,12 +332,13 @@ public class ExpungementService {
 
         ssnRepo.findByMaster_SystemId(master.getSystemId()).stream().findFirst()
                 .ifPresent(s -> log.setSsn(s.getSsn()));
-
+        log.setPcn(req.getCogentPcn());
         log.setCogentPcn(req.getCogentPcn());
         log.setCogentPcn2(req.getCogentPcn2());
         log.setCourtCaseNumber(req.getCourtCaseNumber());
         log.setChargeDescription(req.getCharge());
         log.setReasonForDeletion(req.getReason());
+        log.setExpungementDate(LocalDateTime.now());
 
         expungementRepo.save(log);
     }
