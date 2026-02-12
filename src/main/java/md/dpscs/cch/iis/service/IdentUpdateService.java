@@ -41,6 +41,7 @@ public class IdentUpdateService {
 
     // --- Reference Repositories ---
     private final IdentDocumentRepository documentRepo;
+    private final IdentFbiDowngradeRepository fbiDowngradeRepo;
 
     // --- Support Services ---
     private final AuditService auditService;
@@ -57,7 +58,7 @@ public class IdentUpdateService {
         IdentMaster master = masterRepo.findById(systemId)
                 .orElseThrow(() -> new IllegalArgumentException("Record not found for SystemID: " + systemId));
 
-        // --- 1. Mainframe Validation Logic (II1100C) ---
+        // --- 1. Mainframe Validation Logic ---
         if (StringUtils.hasText(request.getRace()) && !referenceDataService.isValidRaceCode(request.getRace())) {
             throw new IllegalArgumentException("Invalid Race Code: " + request.getRace());
         }
@@ -77,9 +78,8 @@ public class IdentUpdateService {
         master.setCitizenshipCode(request.getCitizenship());
         master.setComments(request.getComments());
 
-        // Update timestamp
         master.setLastUpdateDate(LocalDateTime.now());
-        masterRepo.save(master);
+        // Do NOT save master yet; waiting for potential RecordType change
 
         // --- 3. Sync Primary Name Demographics ---
         IdentName primaryName = getPrimaryName(systemId);
@@ -89,20 +89,86 @@ public class IdentUpdateService {
         if (StringUtils.hasText(request.getDob())) {
             primaryName.setDateOfBirth(LocalDate.parse(request.getDob(), DATE_FMT));
         }
-        nameRepo.save(primaryName);
 
-        // --- 4. Update Caution Flag ---
-        if (request.getCautionFlag() != null) {
-            List<String> cautions = StringUtils.hasText(request.getCautionFlag())
-                    ? List.of(request.getCautionFlag())
-                    : List.of(); // Send empty list to clear if blank
-            handleCautions(master, cautions);
+        // --- 4. Pattern Type Update & Removal Logic ---
+        if (request.getPatternRight() != null || request.getPatternLeft() != null) {
+            String rawRight = request.getPatternRight() == null ? "" : request.getPatternRight().trim();
+            String rawLeft = request.getPatternLeft() == null ? "" : request.getPatternLeft().trim();
+
+            if ((!rawRight.isEmpty() && rawLeft.isEmpty()) || (rawRight.isEmpty() && !rawLeft.isEmpty())) {
+                throw new IllegalArgumentException("Invalid Pattern Update: Both Right and Left Pattern Types must be populated or cleared together.");
+            }
+
+            String numericRight = utils.convertDisplayToMafisHand(rawRight);
+            String numericLeft = utils.convertDisplayToMafisHand(rawLeft);
+
+            if (numericRight.isEmpty() && numericLeft.isEmpty()) {
+                primaryName.setMafisFingerprint(null); // Explicit Removal
+            } else {
+                String fullFp = String.format("%-5s%-5s", numericRight, numericLeft);
+                primaryName.setMafisFingerprint(fullFp);
+            }
+
+            // CRITICAL FIX: Trigger recalculation here.
+            // Note: This uses the CURRENT master.fbiNumber (which might be null if cleared previously)
+            recalculateRecordType(master, primaryName);
         }
 
-        // 5. Update Address
+        nameRepo.save(primaryName);
+        masterRepo.save(master); // Saves Master with new RecordType if changed
+
+        // --- 5. Address & Caution Updates (Existing code) ---
+        if (request.getCautionFlag() != null) {
+            List<String> cautions = StringUtils.hasText(request.getCautionFlag())
+                    ? List.of(request.getCautionFlag()) : List.of();
+            handleCautions(master, cautions);
+        }
         updateAddress(master, request);
 
         auditService.logAction(username, ipAddress, "UPDATE_DEMOGRAPHICS", "Updated SID: " + master.getSid());
+    }
+
+    /**
+     * Recalculates the Record Type based on FBI Number, Fingerprints, AND Criminal References.
+     * * Logic Hierarchy:
+     * 1. CRIMINAL (' '): If Any Criminal Reference exists.
+     * 2. PENDING ('T'): If No FBI AND No Fingerprints.
+     * 3. NON-CRIMINAL ('N'): If No Criminal Refs, BUT Fingerprints Exist (and was Pending).
+     */
+    private void recalculateRecordType(IdentMaster master, IdentName primaryName) {
+        String fbi = master.getFbiNumber() != null ? master.getFbiNumber().trim() : "";
+        String mafis = primaryName.getMafisFingerprint() != null ? primaryName.getMafisFingerprint().trim() : "";
+
+        // Check for existing Criminal Events (PAA, WAR, DOC, etc.)
+        boolean hasCrimRef = hasCriminalReferences(master.getSystemId());
+
+        // --- PRIORITY 1: CRIMINAL STATUS (' ') ---
+        // If a Criminal Event exists, the record is Criminal.
+        if (hasCrimRef) {
+            // If currently Pending ('T'), Non-Criminal ('N'), or Juvenile ('J'),
+            // upgrade/correct it to Criminal (' ') because a Criminal criteria is met.
+            if(fbi.isEmpty() && mafis.isEmpty()) {
+                master.setRecordType("T");
+            }else{
+                master.setRecordType(" ");
+            }
+            // If already ' ' (Criminal), it remains ' '.
+        }
+
+        // --- PRIORITY 2: NO CRIMINAL CRITERIA ---
+        // (No FBI Number AND No Criminal References)
+        else {
+            // Sub-rule A: No Biometrics -> Downgrade to Pending ('T')
+            // This handles the "Pattern Removal" scenario for purely civil/empty records.
+            if (fbi.isEmpty() && mafis.isEmpty()) {
+                master.setRecordType("T");
+            }
+            // Sub-rule B: Has Biometrics -> Upgrade Pending to Non-Criminal ('N')
+            // A record with prints but no criminal data is a valid Civil record.
+            else {
+                    master.setRecordType("N");
+            }
+        }
     }
 
     /**
@@ -113,23 +179,31 @@ public class IdentUpdateService {
         IdentName primaryName = getPrimaryName(systemId);
         IdentMaster master = primaryName.getMaster();
 
-        // --- 1. UCN Logic (Updated to match II0800C Legacy Code) ---
+        // --- 1. UCN / FBI Number Logic ---
         if (request.getUcn() != null) {
             String newUcn = request.getUcn().trim();
             String currentUcn = master.getFbiNumber();
 
-            if (!newUcn.equals(currentUcn)) {
+            // Normalize for comparison
+            String safeCurrent = currentUcn == null ? "" : currentUcn;
+
+            if (!newUcn.equals(safeCurrent)) {
                 if (StringUtils.hasText(newUcn)) {
-                    // Update UCN only. No side effects on Record Type.
                     master.setFbiNumber(newUcn);
                 } else {
-                    // Clear UCN. No side effects on Record Type.
-                    master.setFbiNumber(null);
+                    // Before clearing, save the OLD number to the Downgrade Staging Table.
+                    if (StringUtils.hasText(currentUcn)) {
+                        saveFbiDowngradeStaging(master, currentUcn, username);
+                    }
+                    master.setFbiNumber(null); // Clearing FBI Number
                 }
+
+                // CRITICAL FIX: Recalculate Record Type immediately after changing FBI Number
+                recalculateRecordType(master, primaryName);
             }
         }
 
-        // 3. Name Conflict Check (Cannot rename Primary to an existing Alias)
+        // --- 2. Name Conflict Check ---
         boolean aliasConflict = nameRepo.findByMaster_SystemId(systemId).stream()
                 .filter(n -> "A".equals(n.getNameType()))
                 .anyMatch(alias -> isSameName(alias, request));
@@ -138,7 +212,7 @@ public class IdentUpdateService {
             throw new IllegalArgumentException("This name is already used as an alias.");
         }
 
-        // 4. Update Name Fields
+        // --- 3. Update Name Fields ---
         primaryName.setLastName(request.getLastName().toUpperCase());
         primaryName.setFirstName(request.getFirstName().toUpperCase());
 
@@ -146,15 +220,14 @@ public class IdentUpdateService {
         primaryName.setMiddleName(mid);
         primaryName.setMiddleInitial(!mid.isEmpty() ? mid.substring(0, 1) : "");
 
-        // 5. Recalculate Soundex (Legacy Rule: Always recalc on name change)
+        // --- 4. Recalculate Soundex ---
         String newSoundex = utils.calculateStandardSoundex(primaryName.getLastName());
         primaryName.setSoundexCode(newSoundex);
 
-        // 6. Save & Log
+        // --- 5. Save & Log ---
         nameRepo.save(primaryName);
-
         master.setLastUpdateDate(LocalDateTime.now());
-        masterRepo.save(master);
+        masterRepo.save(master); // Saves the updated RecordType
 
         auditService.logAction(username, ipAddress, "UPDATE_TRUE_NAME", "Updated Name/UCN for SID: " + master.getSid());
     }
@@ -677,5 +750,27 @@ public class IdentUpdateService {
                 doc.getDocumentType() != null &&
                         CRIMINAL_REF_TYPES.contains(doc.getDocumentType().toUpperCase().trim())
         );
+    }
+
+    private void saveFbiDowngradeStaging(IdentMaster master, String deletedFbiNumber, String username) {
+        IdentFbiDowngrade log = new IdentFbiDowngrade();
+
+        // Key Fields
+        log.setSid(master.getSid());
+        log.setFbiNumber(deletedFbiNumber); // The number being deleted
+        log.setSystemId(master.getSystemId());
+
+        // Audit Fields
+        log.setUserId(username);
+        log.setFbiRecordIndicator("N"); // 'N' indicates staged by Update (not yet processed by FBI)
+
+        // Populate Demographics from Primary Name for historical context (per II1100C logic)
+        IdentName pName = getPrimaryName(master.getSystemId());
+        log.setLastName(pName.getLastName());
+        log.setFirstName(pName.getFirstName());
+        log.setMiddleName(pName.getMiddleName());
+
+        // Save to AD.ADT_FBDGR
+        fbiDowngradeRepo.save(log);
     }
 }

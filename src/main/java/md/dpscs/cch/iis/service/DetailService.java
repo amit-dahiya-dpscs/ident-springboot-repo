@@ -171,7 +171,7 @@ public class DetailService {
         return switch (code.toUpperCase()) {
             case "J" -> "JUVENILE";
             case "N" -> "NON-CRIMINAL";
-            case "P" -> "PENDING";
+            case "T" -> "PENDING";
             case "F" -> "FLYER";
             default -> "CRIMINAL";
         };

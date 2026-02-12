@@ -31,7 +31,19 @@ public class LocalConfig {
                 .roles("CCH IDENT EDIT USERS", "CCH IDENT DELETE USERS", "CCH EXPUNGEMENT UNIT", "CCH DATA INTEGRITY")
                 .build();
 
-        return new InMemoryUserDetailsManager(qaUser);
+        UserDetails diUser = User.builder()
+                .username("diuser")
+                .password(passwordEncoder.encode("Ident@1234"))
+                .roles("CCH IDENT EDIT USERS", "CCH IDENT DELETE USERS", "CCH DATA INTEGRITY")
+                .build();
+
+        UserDetails expUser = User.builder()
+                .username("expuser")
+                .password(passwordEncoder.encode("Ident@1234"))
+                .roles("CCH IDENT EDIT USERS", "CCH IDENT DELETE USERS", "CCH EXPUNGEMENT UNIT")
+                .build();
+
+        return new InMemoryUserDetailsManager(qaUser, diUser, expUser);
     }
 
     /**

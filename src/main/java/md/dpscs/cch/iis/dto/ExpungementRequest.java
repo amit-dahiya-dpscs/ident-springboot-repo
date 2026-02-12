@@ -28,4 +28,6 @@ public class ExpungementRequest {
     private String identification;
     private String ucn;
     private String comments;
+
+    private String requestingUnit;
 }

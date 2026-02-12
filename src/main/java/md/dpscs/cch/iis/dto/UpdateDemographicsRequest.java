@@ -66,4 +66,10 @@ public class UpdateDemographicsRequest {
 
     @Size(max = 5)
     private String zip;
+
+    @Pattern(regexp = "^[\\\\/AWXU? ]{0,5}$", message = "Pattern must contain only \\, /, A, W, X, U, ?, or Space, and be up to 5 characters.")
+    private String patternRight;
+
+    @Pattern(regexp = "^[\\\\/AWXU? ]{0,5}$", message = "Pattern must contain only \\, /, A, W, X, U, ?, or Space, and be up to 5 characters.")
+    private String patternLeft;
 }
