@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -630,6 +631,8 @@ public class IdentUpdateService {
 
         if (documents == null) return;
 
+        IdentName primaryName = getPrimaryName(systemId);
+
         for (DocumentDTO docDto : documents) {
             if (docDto.getId() != null) {
                 // UPDATE EXISTING (Description Only)
@@ -678,22 +681,13 @@ public class IdentUpdateService {
                 doc.setDocumentNumber(docDto.getDocumentNumber().toUpperCase().trim());
                 doc.setDescription(docDto.getDescription() != null ? docDto.getDescription().toUpperCase().trim() : "");
 
-                // --- CRITICAL RULE: UPGRADE RECORD TYPE ON CRIMINAL EVENT ---
-                // If the new reference is Criminal (e.g., CAR, WAR), upgrade Record Type to Criminal.
-                if (CRIMINAL_REF_TYPES.contains(type)) {
-                    String currentRecType = master.getRecordType() != null ? master.getRecordType() : "";
-
-                    // Upgrade 'N' (Non-Criminal) to ' ' (Criminal Space)
-                    if (!" ".equals(currentRecType) && !"C".equalsIgnoreCase(currentRecType)) {
-                        master.setRecordType(" ");
-                        masterRepo.save(master);
-                    }
-                }
-
                 String category = referenceDataService.determineCategory(type);
                 doc.setDocCategory(category);
 
                 documentRepo.save(doc);
+
+                recalculateRecordType(master, primaryName);
+                masterRepo.save(master);
             }
         }
 
@@ -753,24 +747,45 @@ public class IdentUpdateService {
     }
 
     private void saveFbiDowngradeStaging(IdentMaster master, String deletedFbiNumber, String username) {
-        IdentFbiDowngrade log = new IdentFbiDowngrade();
+        // 1. Check for existing record (II1100C Lines 5101-5106)
+        Optional<IdentFbiDowngrade> existingRecord = fbiDowngradeRepo.findBySidAndFbiNumberAndFbiRecordIndicator(
+                master.getSystemId(),
+                master.getSid(),
+                deletedFbiNumber,
+                "N" // 'N' indicates it is a Staged/Pending downgrade
+        );
 
-        // Key Fields
-        log.setSid(master.getSid());
-        log.setFbiNumber(deletedFbiNumber); // The number being deleted
-        log.setSystemId(master.getSystemId());
+        IdentFbiDowngrade log;
 
-        // Audit Fields
+        if (existingRecord.isPresent()) {
+            // --- UPDATE EXISTING (II1100C Lines 5124-5132) ---
+            log = existingRecord.get();
+            // In COBOL UPDATE-FBDGR, it updates the timestamp and user.
+            // It also updates demographics if they changed, though typically they persist.
+        } else {
+            // --- INSERT NEW (II1100C Lines 5114-5118) ---
+            log = new IdentFbiDowngrade();
+            log.setSid(master.getSid());
+            log.setFbiNumber(deletedFbiNumber);
+            log.setSystemId(master.getSystemId());
+            log.setFbiRecordIndicator("N"); // 'N' = Staged
+
+            // Populate Demographics from Primary Name (Snapshot at time of removal)
+            // See II1100C Lines 5092-5094
+            IdentName pName = getPrimaryName(master.getSystemId());
+            log.setLastName(pName.getLastName());
+            log.setFirstName(pName.getFirstName());
+            log.setMiddleName(pName.getMiddleName());
+
+            // Populate SSN (II1100C Lines 5095)
+            ssnRepo.findByMaster_SystemId(master.getSystemId()).stream()
+                    .findFirst()
+                    .ifPresent(s -> log.setSsn(s.getSsn()));
+        }
+
+        // --- COMMON UPDATES (For both Insert and Update) ---
         log.setUserId(username);
-        log.setFbiRecordIndicator("N"); // 'N' indicates staged by Update (not yet processed by FBI)
-
-        // Populate Demographics from Primary Name for historical context (per II1100C logic)
-        IdentName pName = getPrimaryName(master.getSystemId());
-        log.setLastName(pName.getLastName());
-        log.setFirstName(pName.getFirstName());
-        log.setMiddleName(pName.getMiddleName());
-
-        // Save to AD.ADT_FBDGR
+        // Save to Database
         fbiDowngradeRepo.save(log);
     }
 }

@@ -28,6 +28,18 @@ public class ExpungementController {
         req.setUsername(user.getUsername());
         req.setUserIp(request.getRemoteAddr());
 
+        // Logic: Check authorities to determine the business unit.
+        // Data Integrity takes precedence for Bulk Downgrade capabilities.
+        boolean isDataIntegrity = user.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_CCH DATA INTEGRITY".equals(a.getAuthority()));
+
+        if (isDataIntegrity) {
+            req.setRequestingUnit("DATA_INTEGRITY");
+        } else {
+            // Default to Expungement Unit (or whatever standard logic applies)
+            req.setRequestingUnit("EXPUNGEMENT_UNIT");
+        }
+
         // Capture the potential warning message from the service
         String warningMessage = expungementService.processExpungement(req);
 

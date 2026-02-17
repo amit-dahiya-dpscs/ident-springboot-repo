@@ -9,6 +9,6 @@ import java.util.Optional;
 @Repository
 public interface IdentFbiDowngradeRepository extends JpaRepository<IdentFbiDowngrade, Long> {
 
-    Optional<IdentFbiDowngrade> findBySidAndFbiNumberAndFbiRecordIndicator(String sid, String fbiNumber, String ind);
+    Optional<IdentFbiDowngrade> findBySidAndFbiNumberAndFbiRecordIndicator(Long systemId, String sid, String fbiNumber, String ind);
 
 }

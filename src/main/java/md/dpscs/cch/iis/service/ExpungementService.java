@@ -125,75 +125,113 @@ public class ExpungementService {
     // File: src/main/java/md/dpscs/cch/iis/service/ExpungementService.java
 
     private String processDowngrade(IdentMaster master, ExpungementRequest req, long crimCount, long nonCrimCount) {
-        // 1. Legacy Record Counts Validation (Shared Rule)
+
+        // --- 1. VALIDATE TARGET DOCUMENT TYPE ---
+        if (req.getDocumentId() != null) {
+            IdentDocument targetDoc = docRepo.findById(req.getDocumentId())
+                    .orElseThrow(() -> new IllegalArgumentException("Target Document not found"));
+
+            if (!targetDoc.getMaster().getSystemId().equals(master.getSystemId())) {
+                throw new IllegalArgumentException("Security Mismatch: Document does not belong to SID.");
+            }
+
+            if (!CRIMINAL_TYPES.contains(targetDoc.getDocumentType())) {
+                throw new IllegalStateException("CANNOT PERFORM DOWNGRADE ON A NON-CRIMINAL EVENT. PLEASE SELECT A CRIMINAL EVENT.");
+            }
+        }
+
+        // --- 2. VALIDATE BASIC COUNTS ---
         if (crimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
-        if (crimCount > 1) throw new IllegalStateException("MULTIPLE ARREST EVENTS EXIST – CAN NOT PERFORM A DOWNGRADE. USE PART CANCEL.");
         if (nonCrimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING NON-CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
 
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
         String warningMessage = null;
+        String fbiLogIndicator = "";
+        String processType = ""; // Variable to hold 'EXP' or 'DWN'
 
-        // Variables for Logging
-        String processType;
-        String fbiLogIndicator;
+        // --- 3. FBI NUMBER HANDLING ---
+        String currentUcn = master.getFbiNumber() == null ? "" : master.getFbiNumber().trim();
+        String requestUcn = req.getUcn() == null ? "" : req.getUcn().trim();
+        boolean isFbiChanged = false;
 
-        // --- BRANCH LOGIC BASED ON UNIT ---
-        if ("DATA_INTEGRITY".equalsIgnoreCase(req.getRequestingUnit())) {
+        if (!requestUcn.isEmpty() && !requestUcn.equals(currentUcn)) {
+            throw new IllegalArgumentException("Security Violation: You cannot change the FBI Number to a new value. Only clearing is allowed.");
+        }
+
+        if (requestUcn.isEmpty() && !currentUcn.isEmpty()) {
+            boolean isRapback = "R".equalsIgnoreCase(master.getRapbackSubscriptionIndicator()) ||
+                    "Y".equalsIgnoreCase(master.getRapbackSubscriptionIndicator());
+            if (isRapback) {
+                throw new IllegalStateException("Cannot clear FBI Number: Rapback is active.");
+            }
+
+            createFbiDowngradeLog(master, req, eventDate);
+            master.setFbiNumber(null);
+            isFbiChanged = true;
+        }
+
+        // --- 4. DETERMINE LOG INDICATOR & UNIT LOGIC ---
+        boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+        boolean isDataIntegrity = "DATA_INTEGRITY".equals(req.getRequestingUnit());
+
+        if (isDataIntegrity) {
             // === DATA INTEGRITY UNIT (II2300C Logic) ===
-            processType = "DWN";
-            fbiLogIndicator = "D"; // "D" logged unconditionally for Data Integrity
+            processType = "DWN"; // DI always uses DWN
+            fbiLogIndicator = "D";
 
-            // Note: II2300C logic typically assumes the User has manually cleared the UCN
-            // or checks for consolidation. For modernization, we proceed with the update.
+            // Anchor Validation
+            if (crimCount >= 2) {
+                boolean hasCns = docRepo.findByMaster_SystemId(master.getSystemId()).stream()
+                        .anyMatch(d -> "CNS".equalsIgnoreCase(d.getDocumentType()));
+                boolean hasOtherNonCrim = docRepo.findByMaster_SystemId(master.getSystemId()).stream()
+                        .anyMatch(d -> !CRIMINAL_TYPES.contains(d.getDocumentType().toUpperCase()));
+
+                if (("T".equals(master.getRecordType()) || "PENDING".equals(master.getRecordType())) && !hasCns) {
+                    throw new IllegalStateException("DI Downgrade Blocked: Pending record with multiple criminals requires a 'CNS' event.");
+                }
+                else if ((!"T".equals(master.getRecordType()) && !"PENDING".equals(master.getRecordType())) && !hasOtherNonCrim) {
+                    throw new IllegalStateException("DI Downgrade Blocked: Multiple criminals exist. Add a Non-Criminal reference first.");
+                }
+            }
 
         } else {
             // === EXPUNGEMENT UNIT (II1000C Logic) ===
-            processType = "EXP";
+            processType = "EXP"; // Expungement Unit uses EXP
 
-            boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+            if (crimCount > 1) {
+                throw new IllegalStateException("MULTIPLE ARREST EVENTS EXIST – CAN NOT PERFORM A DOWNGRADE. USE PART CANCEL.");
+            }
 
             if (isFbiOwned) {
-                // FBI Owned: Suppress DRS, Log 'X'
                 fbiLogIndicator = "X";
                 warningMessage = "REC IS FBI OWNED - DRS MSG NOT SENT";
-                createFbiDowngradeLog(master, req, eventDate);
             } else {
-                // State Owned: Send DRS, Log 'E'
-                if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
-                    throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE UCN # IS MISSING.");
+                if (isFbiChanged) {
+                    fbiLogIndicator = "E";
+                    triggerIp07Transaction(master.getSid());
+                } else {
+                    fbiLogIndicator = " ";
                 }
-                fbiLogIndicator = "E";
-                triggerIp07Transaction(master.getSid());
             }
         }
 
-        // 2. Database Updates (IIV_IDENT01)
-        master.setRecordType("N"); // Set to Non-Criminal
-
-        boolean isRapback = "R".equalsIgnoreCase(master.getRapbackSubscriptionIndicator()) ||
-                "Y".equalsIgnoreCase(master.getRapbackSubscriptionIndicator());
-
-        if (!isRapback) {
-            master.setFbiNumber(null); // Clear FBI Number
-        }
-        if (req.getComments() != null) {
-            master.setComments(req.getComments());
-        }
+        // --- 5. DATABASE UPDATES ---
+        master.setRecordType("N");
+        if (req.getComments() != null) master.setComments(req.getComments());
         master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
 
-        // 3. Delete Criminal References
+        // --- 6. DELETE CRIMINAL RECORDS ---
         docRepo.findByMaster_SystemId(master.getSystemId()).stream()
                 .filter(d -> CRIMINAL_TYPES.contains(d.getDocumentType()))
+                .filter(d -> !"CNS".equalsIgnoreCase(d.getDocumentType())) // <--- CRITICAL FIX
                 .forEach(docRepo::delete);
 
-        // 4. Log Transaction (IPT_RWEXP / T_IDENT_EXPUNGEMENT)
-        // Use the determined processType ('EXP' or 'DWN') and indicator ('E', 'X', or 'D')
+        // --- 7. FINAL LOG ---
+        // FIX: Use the calculated 'processType' variable ("EXP" or "DWN")
         createStandardExpungementLog(master, req, processType, fbiLogIndicator, eventDate);
 
-        // 5. Audit
-        auditService.logAction(req.getUsername(), req.getUserIp(), "DOWNGRADE",
-                String.format("Downgraded SID: %s (Unit: %s)", master.getSid(), req.getRequestingUnit()));
+        auditService.logAction(req.getUsername(), req.getUserIp(), "DOWNGRADE", "Downgraded SID: " + master.getSid());
 
         return warningMessage;
     }
@@ -234,6 +272,7 @@ public class ExpungementService {
 
         if(isFbiOwned){
             fbiLogIndicator="X";
+            createFbiDowngradeLog(master, req, eventDate);
         }
         else{
             fbiLogIndicator="C";
@@ -282,6 +321,7 @@ public class ExpungementService {
 
         if(isFbiOwned){
             fbiLogIndicator="X";
+            createFbiDowngradeLog(master, req, eventDate);
         }
         else{
             fbiLogIndicator="P";
@@ -398,6 +438,7 @@ public class ExpungementService {
         }
 
         Optional<IdentFbiDowngrade> stagedLog = fbiDowngradeRepo.findBySidAndFbiNumberAndFbiRecordIndicator(
+                master.getSystemId(),
                 master.getSid(),
                 fbiNumberToLog,
                 "N" // Look for the placeholder
