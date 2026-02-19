@@ -140,9 +140,11 @@ public class ExpungementService {
             }
         }
 
+        boolean isDataIntegrity = "DATA_INTEGRITY".equals(req.getRequestingUnit());
+
         // --- 2. VALIDATE BASIC COUNTS ---
         if (crimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
-        if (nonCrimCount == 0) throw new IllegalStateException("MUST HAVE AN EXISTING NON-CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
+        if (nonCrimCount == 0 && !isDataIntegrity) throw new IllegalStateException("MUST HAVE AN EXISTING NON-CRIMINAL EVENT TO PERFORM THIS DOWNGRADE FUNCTION.");
 
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
         String warningMessage = null;
@@ -172,7 +174,6 @@ public class ExpungementService {
 
         // --- 4. DETERMINE LOG INDICATOR & UNIT LOGIC ---
         boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
-        boolean isDataIntegrity = "DATA_INTEGRITY".equals(req.getRequestingUnit());
 
         if (isDataIntegrity) {
             // === DATA INTEGRITY UNIT (II2300C Logic) ===
@@ -205,18 +206,23 @@ public class ExpungementService {
             if (isFbiOwned) {
                 fbiLogIndicator = "X";
                 warningMessage = "REC IS FBI OWNED - DRS MSG NOT SENT";
+                createFbiDowngradeLog(master, req, eventDate);
             } else {
-                if (isFbiChanged) {
-                    fbiLogIndicator = "E";
-                    triggerIp07Transaction(master.getSid());
-                } else {
-                    fbiLogIndicator = " ";
-                }
+                fbiLogIndicator = "E";
+                triggerIp07Transaction(master.getSid());
             }
         }
 
         // --- 5. DATABASE UPDATES ---
-        master.setRecordType("N");
+        IdentName primaryName = getPrimaryName(master.getSystemId());
+        String fbi = master.getFbiNumber() != null ? master.getFbiNumber().trim() : "";
+        String mafis = primaryName.getMafisFingerprint() != null ? primaryName.getMafisFingerprint().trim() : "";
+
+        if (fbi.isEmpty() && mafis.isEmpty()) {
+            master.setRecordType("T"); // Pending (No Biometrics)
+        } else {
+            master.setRecordType("N"); // Non-Criminal (Biometrics Exist)
+        }
         if (req.getComments() != null) master.setComments(req.getComments());
         master.setLastUpdateDate(LocalDateTime.now());
         masterRepo.save(master);
@@ -437,10 +443,9 @@ public class ExpungementService {
             fbiNumberToLog = req.getUcn(); // Fallback if passed in request
         }
 
-        Optional<IdentFbiDowngrade> stagedLog = fbiDowngradeRepo.findBySidAndFbiNumberAndFbiRecordIndicator(
+        Optional<IdentFbiDowngrade> stagedLog = fbiDowngradeRepo.findBySystemIdAndSidAndFbiRecordIndicator(
                 master.getSystemId(),
                 master.getSid(),
-                fbiNumberToLog,
                 "N" // Look for the placeholder
         );
 

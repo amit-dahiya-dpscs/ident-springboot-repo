@@ -80,18 +80,21 @@ public class IdentUpdateService {
         master.setComments(request.getComments());
 
         master.setLastUpdateDate(LocalDateTime.now());
-        // Do NOT save master yet; waiting for potential RecordType change
 
-        // --- 3. Sync Primary Name Demographics ---
-        IdentName primaryName = getPrimaryName(systemId);
-        primaryName.setRaceCode(request.getRace());
-        primaryName.setSexCode(request.getSex());
+        // --- 3. Sync Demographics to ALL Names (Primary AND Aliases) ---
+        // FIX: Previously only updated Primary. Now updates all to ensure consistency.
+        List<IdentName> allNames = nameRepo.findByMaster_SystemId(systemId);
 
+        // Calculate fields once
+        LocalDate newDob = null;
         if (StringUtils.hasText(request.getDob())) {
-            primaryName.setDateOfBirth(LocalDate.parse(request.getDob(), DATE_FMT));
+            newDob = LocalDate.parse(request.getDob(), DATE_FMT);
         }
 
-        // --- 4. Pattern Type Update & Removal Logic ---
+        // Pattern Type Logic
+        String newFp = null;
+        // We check if we need to update prints. If both inputs are null, we skip update (preserve existing).
+        // If they are empty strings (cleared), we set newFp to null or empty.
         if (request.getPatternRight() != null || request.getPatternLeft() != null) {
             String rawRight = request.getPatternRight() == null ? "" : request.getPatternRight().trim();
             String rawLeft = request.getPatternLeft() == null ? "" : request.getPatternLeft().trim();
@@ -104,21 +107,42 @@ public class IdentUpdateService {
             String numericLeft = utils.convertDisplayToMafisHand(rawLeft);
 
             if (numericRight.isEmpty() && numericLeft.isEmpty()) {
-                primaryName.setMafisFingerprint(null); // Explicit Removal
+                newFp = null; // Explicit Removal
             } else {
-                String fullFp = String.format("%-5s%-5s", numericRight, numericLeft);
-                primaryName.setMafisFingerprint(fullFp);
+                newFp = String.format("%-5s%-5s", numericRight, numericLeft);
             }
-
-            // CRITICAL FIX: Trigger recalculation here.
-            // Note: This uses the CURRENT master.fbiNumber (which might be null if cleared previously)
-            recalculateRecordType(master, primaryName);
         }
 
-        nameRepo.save(primaryName);
-        masterRepo.save(master); // Saves Master with new RecordType if changed
+        // Iterate and Apply
+        for (IdentName name : allNames) {
+            name.setRaceCode(request.getRace());
+            name.setSexCode(request.getSex());
 
-        // --- 5. Address & Caution Updates (Existing code) ---
+            // Only update DOB if provided in request
+            if (StringUtils.hasText(request.getDob())) {
+                name.setDateOfBirth(newDob);
+            }
+
+            // Only update FP if provided in request
+            if (request.getPatternRight() != null || request.getPatternLeft() != null) {
+                name.setMafisFingerprint(newFp);
+            }
+        }
+
+        // Save All Names
+        nameRepo.saveAll(allNames);
+
+        // --- 4. Recalculate Record Type ---
+        // We can use the primary name for the logic check
+        IdentName primaryName = allNames.stream()
+                .filter(n -> "P".equals(n.getNameType()))
+                .findFirst()
+                .orElse(allNames.getFirst());
+
+        recalculateRecordType(master, primaryName);
+        masterRepo.save(master);
+
+        // --- 5. Address & Caution Updates ---
         if (request.getCautionFlag() != null) {
             List<String> cautions = StringUtils.hasText(request.getCautionFlag())
                     ? List.of(request.getCautionFlag()) : List.of();
@@ -748,7 +772,7 @@ public class IdentUpdateService {
 
     private void saveFbiDowngradeStaging(IdentMaster master, String deletedFbiNumber, String username) {
         // 1. Check for existing record (II1100C Lines 5101-5106)
-        Optional<IdentFbiDowngrade> existingRecord = fbiDowngradeRepo.findBySidAndFbiNumberAndFbiRecordIndicator(
+        Optional<IdentFbiDowngrade> existingRecord = fbiDowngradeRepo.findBySystemIdAndSidAndFbiNumberAndFbiRecordIndicator(
                 master.getSystemId(),
                 master.getSid(),
                 deletedFbiNumber,
@@ -769,19 +793,19 @@ public class IdentUpdateService {
             log.setFbiNumber(deletedFbiNumber);
             log.setSystemId(master.getSystemId());
             log.setFbiRecordIndicator("N"); // 'N' = Staged
-
-            // Populate Demographics from Primary Name (Snapshot at time of removal)
-            // See II1100C Lines 5092-5094
-            IdentName pName = getPrimaryName(master.getSystemId());
-            log.setLastName(pName.getLastName());
-            log.setFirstName(pName.getFirstName());
-            log.setMiddleName(pName.getMiddleName());
-
-            // Populate SSN (II1100C Lines 5095)
-            ssnRepo.findByMaster_SystemId(master.getSystemId()).stream()
-                    .findFirst()
-                    .ifPresent(s -> log.setSsn(s.getSsn()));
         }
+
+        // Populate Demographics from Primary Name (Snapshot at time of removal)
+        // See II1100C Lines 5092-5094
+        IdentName pName = getPrimaryName(master.getSystemId());
+        log.setLastName(pName.getLastName());
+        log.setFirstName(pName.getFirstName());
+        log.setMiddleName(pName.getMiddleName());
+
+        // Populate SSN (II1100C Lines 5095)
+        ssnRepo.findByMaster_SystemId(master.getSystemId()).stream()
+                .findFirst()
+                .ifPresent(s -> log.setSsn(s.getSsn()));
 
         // --- COMMON UPDATES (For both Insert and Update) ---
         log.setUserId(username);

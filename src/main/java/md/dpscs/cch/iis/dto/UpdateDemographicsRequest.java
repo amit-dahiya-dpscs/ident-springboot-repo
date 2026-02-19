@@ -19,10 +19,10 @@ public class UpdateDemographicsRequest {
     @Size(max = 2, message = "POB must be 2 characters")
     private String placeOfBirth;
 
-    @Pattern(regexp = "^\\d{3}$", message = "Height must be 3 digits (e.g., 509)")
+    @Pattern(regexp = "^$|^\\d{3}$", message = "Height must be greater than 399 and less than 712 or empty")
     private String height;
 
-    @Pattern(regexp = "^\\d{3}$", message = "Weight must be 3 digits (e.g., 160)")
+    @Pattern(regexp = "^$|^\\d{3}$", message = "Weight must be between 49 – 500 or empty")
     private String weight;
 
     @Size(max = 3)
