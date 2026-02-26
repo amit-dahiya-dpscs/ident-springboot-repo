@@ -2,6 +2,9 @@ package md.dpscs.cch.iis.model;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
+
 import java.time.LocalDateTime;
 
 @Entity
@@ -22,5 +25,6 @@ public class IdentSSN {
     private String ssn;
 
     @Column(name = "DateRecorded")
+    @UpdateTimestamp
     private LocalDateTime dateRecorded;
 }

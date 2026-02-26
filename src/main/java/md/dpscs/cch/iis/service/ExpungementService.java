@@ -88,8 +88,11 @@ public class ExpungementService {
         LocalDate eventDate = getLatestCriminalDate(master.getSystemId());
         String warningMessage = null;
 
+        boolean isOnIII = "S".equalsIgnoreCase(master.getIiiStatus()) || "M".equalsIgnoreCase(master.getIiiStatus());
+        boolean isFbiOwned = fbiMasterRepo.existsBySid(master.getSid());
+
         // FBI OWNERSHIP CHECK
-        if (fbiMasterRepo.existsBySid(master.getSid())) {
+        if (isFbiOwned) {
             // 1. Log to FBI Downgrade table (Modern Requirement)
             createFbiDowngradeLog(master, req, eventDate);
 
@@ -101,7 +104,7 @@ public class ExpungementService {
             warningMessage = "REC IS FBI OWNED - DRS MSG NOT SENT";
 
             // NOTE: We do NOT call triggerIp07Transaction() here, effectively suppressing the DRS message.
-        } else {
+        } else if(isOnIII){
             // NON-FBI OWNED Logic
             if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
                 throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE FBI # IS MISSING.");
@@ -181,7 +184,7 @@ public class ExpungementService {
             fbiLogIndicator = "D";
 
             // Anchor Validation
-            if (crimCount >= 2) {
+            if (crimCount >= 1) {
                 boolean hasCns = docRepo.findByMaster_SystemId(master.getSystemId()).stream()
                         .anyMatch(d -> "CNS".equalsIgnoreCase(d.getDocumentType()));
                 boolean hasOtherNonCrim = docRepo.findByMaster_SystemId(master.getSystemId()).stream()
@@ -209,6 +212,9 @@ public class ExpungementService {
                 createFbiDowngradeLog(master, req, eventDate);
             } else {
                 fbiLogIndicator = "E";
+                if (master.getFbiNumber() == null || master.getFbiNumber().trim().isEmpty()) {
+                    throw new IllegalStateException("GIVE THIS CASE TO YOUR SUPERVISOR. NO DRS MSG WAS SENT – THE UCN # IS MISSING.");
+                }
                 triggerIp07Transaction(master.getSid());
             }
         }
@@ -443,7 +449,7 @@ public class ExpungementService {
             fbiNumberToLog = req.getUcn(); // Fallback if passed in request
         }
 
-        Optional<IdentFbiDowngrade> stagedLog = fbiDowngradeRepo.findBySystemIdAndSidAndFbiRecordIndicator(
+        Optional<IdentFbiDowngrade> stagedLog = fbiDowngradeRepo.findFirstBySystemIdAndSidAndFbiRecordIndicatorOrderByProcessTimestampDesc(
                 master.getSystemId(),
                 master.getSid(),
                 "N" // Look for the placeholder

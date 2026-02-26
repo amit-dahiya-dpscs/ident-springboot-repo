@@ -331,6 +331,8 @@ public class IdentUpdateService {
                 aliasToSave.setSexCode(primaryName.getSexCode());
                 aliasToSave.setDateOfBirth(primaryName.getDateOfBirth());
 
+                aliasToSave.setMafisFingerprint(primaryName.getMafisFingerprint());
+
                 // Calculate Soundex
                 aliasToSave.setSoundexCode(utils.calculateStandardSoundex(aliasToSave.getLastName()));
 
@@ -682,6 +684,12 @@ public class IdentUpdateService {
                 }
 
                 String type = docDto.getDocumentType().toUpperCase().trim();
+                if ("CNS".equals(type)) {
+                    String recType = master.getRecordType();
+                    if (!"T".equals(recType) && !"PENDING".equals(recType)) {
+                        throw new IllegalArgumentException("CNS event can only be added to a Pending record (remove FBI Number and Pattern Type first).");
+                    }
+                }
                 String number = docDto.getDocumentNumber().toUpperCase().trim();
                 LocalDate date = docDto.getDocumentDate();
 
@@ -772,7 +780,7 @@ public class IdentUpdateService {
 
     private void saveFbiDowngradeStaging(IdentMaster master, String deletedFbiNumber, String username) {
         // 1. Check for existing record (II1100C Lines 5101-5106)
-        Optional<IdentFbiDowngrade> existingRecord = fbiDowngradeRepo.findBySystemIdAndSidAndFbiNumberAndFbiRecordIndicator(
+        Optional<IdentFbiDowngrade> existingRecord = fbiDowngradeRepo.findFirstBySystemIdAndSidAndFbiNumberAndFbiRecordIndicatorOrderByProcessTimestampDesc(
                 master.getSystemId(),
                 master.getSid(),
                 deletedFbiNumber,

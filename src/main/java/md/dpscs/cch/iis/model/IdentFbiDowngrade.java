@@ -3,6 +3,7 @@ package md.dpscs.cch.iis.model;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -65,7 +66,7 @@ public class IdentFbiDowngrade {
     @Column(name = "DGR_FBIREC", length = 1)
     private String fbiRecordIndicator; // 'Y' indicates FBI ownership confirmed
 
-    @CreationTimestamp
+    @UpdateTimestamp
     @Column(name = "DGR_DTE_TME")
     private LocalDateTime processTimestamp;
 }

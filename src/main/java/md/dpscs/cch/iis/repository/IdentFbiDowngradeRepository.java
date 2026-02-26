@@ -9,9 +9,10 @@ import java.util.Optional;
 @Repository
 public interface IdentFbiDowngradeRepository extends JpaRepository<IdentFbiDowngrade, Long> {
 
-    Optional<IdentFbiDowngrade> findBySystemIdAndSidAndFbiNumberAndFbiRecordIndicator(Long systemId, String sid, String fbiNumber, String ind);
+    Optional<IdentFbiDowngrade> findFirstBySystemIdAndSidAndFbiNumberAndFbiRecordIndicatorOrderByProcessTimestampDesc(
+            Long systemId, String sid, String fbiNumber, String ind);
 
-    // FIX: Added 'SystemId' to the method signature
-    Optional<IdentFbiDowngrade> findBySystemIdAndSidAndFbiRecordIndicator(Long systemId, String sid, String ind);
+    Optional<IdentFbiDowngrade> findFirstBySystemIdAndSidAndFbiRecordIndicatorOrderByProcessTimestampDesc(
+            Long systemId, String sid, String ind);
 
 }
